@@ -1,0 +1,1 @@
+"""Chat client components package."""

@@ -61,3 +61,7 @@ dmypy.json
 
 # PyPI configuration file
 .pypirc
+
+# uv
+uv.lock
+.python-version

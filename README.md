@@ -1,6 +1,6 @@
 # CS-GY-9223 Open Source
 
-Course project repository.
+A chat client interface and implementation.
 
 ## Team
 
@@ -20,11 +20,56 @@ Course project repository.
 - ivanearisty
 - AranyaAryaman
 
-## Repository setup (for initial owner)
+## Prerequisites
 
-1. Create the repo on GitHub (done): `yuktakul04/CS-GY-9223-Open-Source`.
-2. Add collaborators: all team members and TAs above.
-3. Clone the repo locally and work via branches/PRs using the provided templates.
+- Python 3.10 or higher
+- [uv](https://docs.astral.sh/uv/) package manager
+
+## Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/yuktakul04/CS-GY-9223-Open-Source.git
+cd CS-GY-9223-Open-Source
+
+# Install dependencies
+uv sync
+
+# Install with dev dependencies
+uv sync --all-extras
+```
+
+## Development
+
+```bash
+# Run tests
+uv run pytest
+
+# Run linting
+uv run ruff check .
+
+# Run type checking
+uv run mypy components tests
+```
+
+## Documentation
+
+```bash
+cd docs
+uv run mkdocs serve
+```
+
+## Project Structure
+
+```
+.
+├── components/      # Chat client components
+├── tests/           # Test suite
+├── docs/            # MkDocs documentation
+├── .circleci/       # CircleCI CI/CD configuration
+├── pyproject.toml   # Project configuration
+└── README.md
+```
 
 ## License
 

@@ -23,10 +23,12 @@ jobs:
           command: uv run ruff check .
       - run:
           name: Run type checking
-          command: uv run mypy components tests --ignore-missing-imports
+          command: uv run mypy components tests
       - run:
           name: Run tests
-          command: uv run pytest --cov=components --cov-report=xml
+          command: |
+            mkdir -p test-results
+            uv run pytest --junitxml=test-results/pytest.xml --cov=components --cov-report=xml
       - store_test_results:
           path: test-results
       - store_artifacts:
@@ -48,7 +50,7 @@ jobs:
           command: uv sync --extra docs
       - run:
           name: Build documentation
-          command: cd docs && uv run mkdocs build
+          command: uv run mkdocs build
 
 workflows:
   main:

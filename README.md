@@ -1,6 +1,6 @@
 # CS-GY-9223 Open Source
 
-A chat client interface and implementation.
+A chat client interface and a Telegram implementation scaffold.
 
 ## Team
 
@@ -55,7 +55,6 @@ uv run mypy components tests
 ## Documentation
 
 ```bash
-cd docs
 uv run mkdocs serve
 ```
 
@@ -63,12 +62,23 @@ uv run mkdocs serve
 
 ```
 .
-├── components/      # Chat client components
+├── components/      # Interface + implementation components
+│   ├── chat_client/             # chat_client_api interface component
+│   └── telegram_client_impl/    # Telegram implementation component (scaffold)
 ├── tests/           # Test suite
 ├── docs/            # MkDocs documentation
 ├── .circleci/       # CircleCI CI/CD configuration
 ├── pyproject.toml   # Project configuration
 └── README.md
+```
+
+## Dependency Injection Usage
+
+```python
+import telegram_client_impl  # injects factory hooks into chat_client_api
+from chat_client_api import get_client
+
+client = get_client(interactive=False)
 ```
 
 ## License

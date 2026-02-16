@@ -29,6 +29,15 @@
 uv run pytest
 ```
 
+## Using Dependency Injection
+
+```python
+import telegram_client_impl
+from chat_client_api import get_client
+
+client = get_client(interactive=False)
+```
+
 ## Building Documentation
 
 ```bash

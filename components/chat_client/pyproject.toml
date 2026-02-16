@@ -1,5 +1,5 @@
 [project]
-name = "chat-client-chat-client"
+name = "chat-client-api"
 version = "0.1.0"
 description = "Chat client subpackage"
 requires-python = ">=3.10"

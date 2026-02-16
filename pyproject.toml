@@ -33,12 +33,11 @@ target-version = "py310"
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
-    "D100",
-    "D104",
-    "ANN101",
-    "ANN102",
-    "COM812",
-    "ISC001",
+    "D203",   # incompatible with D211 (no-blank-line-before-class); ignoring D203
+    "D213",   # incompatible with D212 (multi-line-summary-first-line); ignoring D213
+    "S101",   # allow `assert` — used extensively in pytest tests
+    "COM812", # trailing comma enforcement conflicts with ruff formatter
+    "ISC001", # implicit string concatenation check conflicts with ruff formatter
 ]
 
 [tool.pytest.ini_options]
@@ -48,14 +47,6 @@ pythonpath = ["."]
 [tool.mypy]
 python_version = "3.10"
 strict = true
-
-[tool.uv]
-dev-dependencies = [
-    "pytest>=8.0.0",
-    "pytest-cov>=4.1.0",
-    "ruff>=0.3.0",
-    "mypy>=1.8.0",
-]
 
 [tool.uv.workspace]
 members = ["components/chat_client"]

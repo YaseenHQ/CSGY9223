@@ -18,7 +18,7 @@
    uv sync
    ```
 
-3. Install development dependencies:
+3. Install all dependencies (dev + docs):
    ```bash
    uv sync --all-extras
    ```

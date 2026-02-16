@@ -35,7 +35,7 @@ cd CS-GY-9223-Open-Source
 # Install dependencies
 uv sync
 
-# Install with dev dependencies
+# Install with all dependencies (dev + docs)
 uv sync --all-extras
 ```
 

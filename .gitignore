@@ -65,3 +65,7 @@ dmypy.json
 # uv
 uv.lock
 .python-version
+
+# Credentials (never commit)
+credentials.json
+token.json

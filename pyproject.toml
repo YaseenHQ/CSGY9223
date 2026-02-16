@@ -34,7 +34,15 @@ line-length = 88
 target-version = "py310"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP"]
+select = ["ALL"]
+ignore = [
+    "D100",
+    "D104",
+    "ANN101",
+    "ANN102",
+    "COM812",
+    "ISC001",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -50,4 +58,21 @@ dev-dependencies = [
     "pytest-cov>=4.1.0",
     "ruff>=0.3.0",
     "mypy>=1.8.0",
+]
+
+[tool.uv.workspace]
+members = ["components/*"]
+
+[tool.coverage.run]
+source = ["components"]
+branch = true
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
 ]

@@ -1,0 +1,66 @@
+[project]
+name = "chat-client"
+version = "0.1.0"
+description = "A chat client interface and implementation"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Team 4"}
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.3.0",
+    "mypy>=1.8.0",
+]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.5.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "D203",   # incompatible with D211 (no-blank-line-before-class); ignoring D203
+    "D213",   # incompatible with D212 (multi-line-summary-first-line); ignoring D213
+    "S101",   # allow `assert` — used extensively in pytest tests
+    "COM812", # trailing comma enforcement conflicts with ruff formatter
+    "ISC001", # implicit string concatenation check conflicts with ruff formatter
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+
+[tool.uv.workspace]
+members = ["components/chat_client"]
+
+[tool.coverage.run]
+source = ["components"]
+branch = true
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]

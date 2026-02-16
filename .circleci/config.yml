@@ -1,0 +1,57 @@
+version: 2.1
+
+orbs:
+  python: circleci/python@2.1.1
+
+jobs:
+  test:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+      - run:
+          name: Install uv
+          command: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - run:
+          name: Add uv to PATH
+          command: echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install dependencies
+          command: uv sync --all-extras
+      - run:
+          name: Run linting
+          command: uv run ruff check .
+      - run:
+          name: Run type checking
+          command: uv run mypy components tests --ignore-missing-imports
+      - run:
+          name: Run tests
+          command: uv run pytest --cov=components --cov-report=xml
+      - store_test_results:
+          path: test-results
+      - store_artifacts:
+          path: coverage.xml
+
+  docs:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+      - run:
+          name: Install uv
+          command: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - run:
+          name: Add uv to PATH
+          command: echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install dependencies
+          command: uv sync --extra docs
+      - run:
+          name: Build documentation
+          command: cd docs && uv run mkdocs build
+
+workflows:
+  main:
+    jobs:
+      - test
+      - docs

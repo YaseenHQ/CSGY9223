@@ -4,7 +4,7 @@ Welcome to the Chat Client documentation.
 
 ## Overview
 
-This project provides:
+This project provides an interface and implementation for a chat client.
 
 - `chat_client_api`: a provider-agnostic chat interface contract
 - `telegram_client_impl`: a Telegram implementation scaffold injected via factory hooks

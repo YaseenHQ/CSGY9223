@@ -63,7 +63,7 @@ uv run mkdocs serve
 ```
 .
 ├── components/      # Interface + implementation components
-│   ├── chat_client/             # chat_client_api interface component
+│   ├── chat_client_api/         # chat_client_api interface component
 │   └── telegram_client_impl/    # Telegram implementation component (scaffold)
 ├── tests/           # Test suite
 ├── docs/            # MkDocs documentation

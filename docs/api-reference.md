@@ -45,3 +45,6 @@ from chat_client_api import get_client
 
 The current implementation is scaffold-only and intentionally raises
 `NotImplementedError` for provider operations.
+## Components
+
+Documentation for chat client components will be added here as the implementation develops.

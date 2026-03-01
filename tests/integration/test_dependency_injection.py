@@ -5,8 +5,6 @@ import importlib
 import chat_client_api
 import chat_client_api.client as client_module
 import chat_client_api.message as message_module
-from telegram_client_impl.client import TelegramClient
-
 
 
 def test_importing_telegram_impl_injects_factories() -> None:
@@ -26,5 +24,9 @@ def test_importing_telegram_impl_injects_factories() -> None:
 
     assert original_get_client is not chat_client_api.get_client
     assert original_get_message is not chat_client_api.get_message
-    assert isinstance(injected_client, TelegramClient)
 
+    # Import here so collection does not eagerly load telegram_client_impl and
+    # inject before the interface tests run. noqa: PLC0415 is intentional.
+    from telegram_client_impl.client import TelegramClient  # noqa: PLC0415
+
+    assert isinstance(injected_client, TelegramClient)

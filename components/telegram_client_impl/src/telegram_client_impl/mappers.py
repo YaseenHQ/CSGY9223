@@ -12,7 +12,7 @@ from telegram_client_impl.errors import TelegramMappingError
 from telegram_client_impl.message import TelegramMessage
 
 
-def to_channel(raw_channel: object | None) -> TelegramChannel:  # noqa: PLR0912
+def to_channel(raw_channel: object | None) -> TelegramChannel:
     """Convert a raw Telegram channel/chat object to TelegramChannel."""
     if raw_channel is None:
         msg = "raw_channel cannot be None"

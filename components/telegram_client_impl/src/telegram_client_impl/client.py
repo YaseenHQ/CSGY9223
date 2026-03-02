@@ -21,6 +21,11 @@ class TelegramClient(Client):
         self._client: _TeleClient | None = None
         self._connected = False
 
+    def _get_client(self) -> _TeleClient:
+        """Return the underlying Telethon client (must be connected)."""
+        assert self._client is not None
+        return self._client
+
     def send_message(self, channel_id: str, text: str) -> Message:
         """Send a message to a Telegram channel/chat."""
         _require_non_empty(value=channel_id, name="channel_id")
@@ -28,7 +33,7 @@ class TelegramClient(Client):
         self._ensure_connected()
 
         try:
-            raw = self._client.send_message(int(channel_id), text)
+            raw = self._get_client().send_message(int(channel_id), text)
         except Exception as exc:  # pragma: no cover - Telethon-specific error types
             msg = f"Failed to send message: {exc}"
             raise TelegramClientError(msg) from exc
@@ -49,7 +54,9 @@ class TelegramClient(Client):
         self._ensure_connected()
 
         try:
-            iterator = self._client.iter_messages(int(channel_id), limit=max_results)
+            iterator = self._get_client().iter_messages(
+                int(channel_id), limit=max_results
+            )
         except Exception as exc:  # pragma: no cover - Telethon-specific error types
             msg = f"Failed to get messages: {exc}"
             raise TelegramClientError(msg) from exc
@@ -65,7 +72,7 @@ class TelegramClient(Client):
         self._ensure_connected()
 
         try:
-            self._client.delete_messages(int(channel_id), int(message_id))
+            self._get_client().delete_messages(int(channel_id), int(message_id))
         except Exception as exc:  # pragma: no cover - Telethon-specific error types
             msg = f"Failed to delete message: {exc}"
             raise TelegramClientError(msg) from exc
@@ -77,7 +84,7 @@ class TelegramClient(Client):
         self._ensure_connected()
 
         try:
-            dialogs = self._client.get_dialogs()
+            dialogs = self._get_client().get_dialogs()
         except Exception as exc:  # pragma: no cover - Telethon-specific error types
             msg = f"Failed to retrieve channels: {exc}"
             raise TelegramClientError(msg) from exc
@@ -109,7 +116,7 @@ class TelegramClient(Client):
             )
 
         try:
-            self._client.start(bot_token=self._config.bot_token)
+            self._get_client().start(bot_token=self._config.bot_token)
         except Exception as exc:  # pragma: no cover - Telethon-specific error types
             msg = f"Failed to authenticate Telegram client: {exc}"
             raise TelegramAuthError(msg) from exc
@@ -128,4 +135,3 @@ def _require_non_empty(*, value: str, name: str) -> None:
     if not value:
         msg = f"{name} must be non-empty"
         raise ValueError(msg)
-

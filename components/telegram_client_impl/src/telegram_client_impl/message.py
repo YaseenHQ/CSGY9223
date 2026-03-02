@@ -102,4 +102,3 @@ def get_message_impl(msg_id: str, raw_data: str) -> Message:
         timestamp=timestamp,
         text=text,
     )
-

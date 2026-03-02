@@ -3,6 +3,7 @@
 from unittest.mock import Mock
 
 import pytest
+
 from chat_client_api.channel import Channel
 from chat_client_api.message import Message, get_message
 

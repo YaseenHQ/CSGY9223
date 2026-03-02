@@ -25,9 +25,7 @@ class Client(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_messages(
-        self, channel_id: str, max_results: int = 10
-    ) -> Iterator[Message]:
+    def get_messages(self, channel_id: str, max_results: int = 10) -> Iterator[Message]:
         """Return an iterator of messages from a channel.
 
         Args:

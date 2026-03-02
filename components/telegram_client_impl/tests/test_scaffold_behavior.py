@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from telegram_client_impl.client import TelegramClient, get_client_impl
 from telegram_client_impl.config import TelegramClientConfig
 from telegram_client_impl.errors import TelegramMappingError
@@ -27,14 +28,18 @@ def test_client_methods_delegate_to_telethon() -> None:
     """Client methods call through to the Telethon client and mappers."""
     client = _client()
 
-    with patch.object(client, "_ensure_connected") as mock_ensure, patch(
-        "telegram_client_impl.client.to_message",
-    ) as mock_to_message, patch(
-        "telegram_client_impl.client.to_channel",
-    ) as mock_to_channel:
+    with (
+        patch.object(client, "_ensure_connected") as mock_ensure,
+        patch(
+            "telegram_client_impl.client.to_message",
+        ) as mock_to_message,
+        patch(
+            "telegram_client_impl.client.to_channel",
+        ) as mock_to_channel,
+    ):
         # Arrange Telethon client on the instance.
         tele_client = MagicMock()
-        client._client = tele_client  # type: ignore[attr-defined]
+        client._client = tele_client
 
         # send_message
         tele_client.send_message.return_value = object()

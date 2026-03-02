@@ -8,7 +8,7 @@ requires-python = ">=3.10"
 authors = [
     {name = "Team 4"}
 ]
-dependencies = []
+dependencies = ["telegram-client-impl"]
 
 [project.optional-dependencies]
 dev = [
@@ -43,9 +43,15 @@ ignore = [
     "ISC001", # implicit string concatenation check conflicts with ruff formatter
 ]
 
+[tool.ruff.lint.isort]
+known-first-party = ["chat_client_api", "telegram_client_impl"]
+
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = [
-    "INP001",  # test directories intentionally omit __init__.py per assignment requirements
+    "INP001",   # test directories intentionally omit __init__.py per assignment
+    "PLR2004",  # allow magic values in test assertions
+    "S106",     # allow fake tokens in test fixtures
+    "SLF001",   # allow accessing _client for mocking in tests
 ]
 
 [tool.pytest.ini_options]
@@ -59,11 +65,19 @@ markers = [
 python_version = "3.10"
 strict = true
 
+[[tool.mypy.overrides]]
+module = [
+    "telethon",
+    "telethon.*",
+]
+ignore_missing_imports = true
+
 [tool.uv.workspace]
 members = ["components/chat_client_api", "components/telegram_client_impl"]
 
 [tool.uv.sources]
 chat-client-api = { workspace = true }
+telegram-client-impl = { workspace = true }
 
 [tool.coverage.run]
 source = ["components"]

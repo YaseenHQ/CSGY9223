@@ -3,6 +3,7 @@
 from unittest.mock import Mock
 
 import pytest
+
 from chat_client_api import Client, get_client
 from chat_client_api.channel import Channel
 from chat_client_api.message import Message
@@ -45,9 +46,7 @@ def test_client_get_messages() -> None:
 
     messages = list(mock_client.get_messages(channel_id="ch_1", max_results=5))
 
-    mock_client.get_messages.assert_called_once_with(
-        channel_id="ch_1", max_results=5
-    )
+    mock_client.get_messages.assert_called_once_with(channel_id="ch_1", max_results=5)
     assert len(messages) == EXPECTED_MESSAGE_COUNT
     assert messages[0].id == "msg_1"
     assert messages[1].id == "msg_2"
@@ -58,9 +57,7 @@ def test_client_delete_message() -> None:
     mock_client = Mock(spec=Client)
     mock_client.delete_message.return_value = True
 
-    success = mock_client.delete_message(
-        channel_id="ch_1", message_id="msg_to_delete"
-    )
+    success = mock_client.delete_message(channel_id="ch_1", message_id="msg_to_delete")
 
     mock_client.delete_message.assert_called_once_with(
         channel_id="ch_1", message_id="msg_to_delete"

@@ -3,7 +3,6 @@
 import chat_client_api
 import chat_client_api.client as client_module
 import chat_client_api.message as message_module
-
 from telegram_client_impl.client import get_client_impl
 from telegram_client_impl.message import get_message_impl
 

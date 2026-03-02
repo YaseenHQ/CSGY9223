@@ -7,6 +7,10 @@ jobs:
   test:
     docker:
       - image: cimg/python:3.10
+    environment:
+      # Set TELEGRAM_E2E_ENABLED=1 to run E2E. Add TELEGRAM_API_ID,
+      # TELEGRAM_API_HASH, TELEGRAM_BOT_TOKEN in CircleCI project settings.
+      TELEGRAM_E2E_ENABLED: "1"
     steps:
       - checkout
       - run:
@@ -21,6 +25,9 @@ jobs:
       - run:
           name: Run linting
           command: uv run ruff check .
+      - run:
+          name: Format check
+          command: uv run ruff format --check .
       - run:
           name: Run type checking
           command: uv run mypy components tests

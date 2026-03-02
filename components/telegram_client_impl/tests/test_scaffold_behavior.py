@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-import json
 
 import pytest
 from telegram_client_impl.client import TelegramClient, get_client_impl
@@ -13,6 +13,8 @@ from telegram_client_impl.config import TelegramClientConfig
 from telegram_client_impl.errors import TelegramMappingError
 from telegram_client_impl.mappers import to_channel, to_message
 from telegram_client_impl.message import TelegramMessage, get_message_impl
+
+EXPECTED_MESSAGE_COUNT = 2
 
 
 def _client() -> TelegramClient:
@@ -44,12 +46,23 @@ def test_client_methods_delegate_to_telethon() -> None:
         assert result is mock_msg
 
         # get_messages
-        tele_client.iter_messages.return_value = [object(), object()]
+        tele_client.iter_messages.return_value = [
+            object(),
+            object(),
+        ]
         mock_to_message.reset_mock()
-        messages = list(client.get_messages(channel_id="123", max_results=2))
-        tele_client.iter_messages.assert_called_with(123, limit=2)
-        assert mock_to_message.call_count == 2
-        assert len(messages) == 2
+        messages = list(
+            client.get_messages(
+                channel_id="123",
+                max_results=EXPECTED_MESSAGE_COUNT,
+            ),
+        )
+        tele_client.iter_messages.assert_called_with(
+            123,
+            limit=EXPECTED_MESSAGE_COUNT,
+        )
+        assert mock_to_message.call_count == EXPECTED_MESSAGE_COUNT
+        assert len(messages) == EXPECTED_MESSAGE_COUNT
 
         # delete_message
         tele_client.delete_messages.reset_mock()

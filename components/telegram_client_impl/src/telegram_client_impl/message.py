@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
+from datetime import datetime, timezone
 
 from chat_client_api.message import Message
 from telegram_client_impl.errors import TelegramMappingError

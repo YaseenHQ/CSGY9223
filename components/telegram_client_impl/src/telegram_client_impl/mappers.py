@@ -12,17 +12,15 @@ from telegram_client_impl.errors import TelegramMappingError
 from telegram_client_impl.message import TelegramMessage
 
 
-def to_channel(raw_channel: object | None) -> TelegramChannel:
+def to_channel(raw_channel: object | None) -> TelegramChannel:  # noqa: PLR0912
     """Convert a raw Telegram channel/chat object to TelegramChannel."""
     if raw_channel is None:
         msg = "raw_channel cannot be None"
         raise ValueError(msg)
 
-    entity: object
-    if isinstance(raw_channel, _Dialog):
-        entity = raw_channel.entity
-    else:
-        entity = raw_channel
+    entity: object = (
+        raw_channel.entity if isinstance(raw_channel, _Dialog) else raw_channel
+    )
 
     if isinstance(entity, (_Channel, _Chat, _User)):
         channel_id = str(entity.id)
@@ -40,14 +38,15 @@ def to_channel(raw_channel: object | None) -> TelegramChannel:
         if isinstance(entity, _User):
             channel_type = "private"
         elif isinstance(entity, _Channel):
-            if getattr(entity, "broadcast", False):
-                channel_type = "channel"
-            else:
-                channel_type = "group"
+            channel_type = (
+                "channel" if getattr(entity, "broadcast", False) else "group"
+            )
         else:
             channel_type = "group"
 
-        return TelegramChannel(channel_id=channel_id, name=name, channel_type=channel_type)
+        return TelegramChannel(
+            channel_id=channel_id, name=name, channel_type=channel_type
+        )
 
     msg = f"Unsupported channel entity type: {type(raw_channel)!r}"
     raise TelegramMappingError(msg)

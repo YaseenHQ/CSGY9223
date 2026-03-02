@@ -45,7 +45,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = [
-    "INP001",  # test directories intentionally omit __init__.py per assignment requirements
+    "INP001",   # test directories intentionally omit __init__.py per assignment
+    "PLR2004",  # allow magic values in test assertions
+    "S106",     # allow fake tokens in test fixtures
+    "SLF001",   # allow accessing _client for mocking in tests
 ]
 
 [tool.pytest.ini_options]

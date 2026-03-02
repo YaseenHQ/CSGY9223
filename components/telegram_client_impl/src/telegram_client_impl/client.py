@@ -2,11 +2,10 @@
 
 from collections.abc import Iterator
 
-from telethon.sync import TelegramClient as _TeleClient
-
 from chat_client_api.channel import Channel
 from chat_client_api.client import Client
 from chat_client_api.message import Message
+from telethon.sync import TelegramClient as _TeleClient
 from telegram_client_impl.config import TelegramClientConfig
 from telegram_client_impl.errors import TelegramAuthError, TelegramClientError
 from telegram_client_impl.mappers import to_channel, to_message

@@ -18,17 +18,7 @@ class TelegramClient(Client):
     def __init__(self, *, config: TelegramClientConfig) -> None:
         """Initialize a Telegram client with static configuration."""
         self._config = config
-
-        # Construct Telethon client; connection and auth are deferred to _ensure_connected.
-        api_id = int(config.api_id) if config.api_id is not None else 0
-        api_hash = config.api_hash or ""
-
-        self._client = _TeleClient(
-            config.session_name,
-            api_id,
-            api_hash,
-            bot_token=config.bot_token,
-        )
+        self._client: _TeleClient | None = None
         self._connected = False
 
     def send_message(self, channel_id: str, text: str) -> Message:
@@ -105,8 +95,18 @@ class TelegramClient(Client):
             or self._config.api_hash is None
             or self._config.bot_token is None
         ):
-            msg = "TELEGRAM_API_ID, TELEGRAM_API_HASH, and TELEGRAM_BOT_TOKEN are required"
+            msg = (
+                "TELEGRAM_API_ID, TELEGRAM_API_HASH, and "
+                "TELEGRAM_BOT_TOKEN are required"
+            )
             raise TelegramAuthError(msg)
+
+        if self._client is None:
+            self._client = _TeleClient(
+                self._config.session_name,
+                int(self._config.api_id),
+                self._config.api_hash,
+            )
 
         try:
             self._client.start(bot_token=self._config.bot_token)

@@ -22,6 +22,9 @@ jobs:
           name: Run linting
           command: uv run ruff check .
       - run:
+          name: Format check
+          command: uv run ruff format --check .
+      - run:
           name: Run type checking
           command: uv run mypy components tests
       - run:

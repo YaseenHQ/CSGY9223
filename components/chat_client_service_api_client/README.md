@@ -1,14 +1,29 @@
 # Chat Client Service API Client
 
-This component is the home for the OpenAPI-generated client code for `chat_client_service`.
+This package contains two layers:
 
-## Generation (planned)
+1. **`chat_client_service_client/`** — auto-generated OpenAPI client produced by
+   `openapi-python-client` from the service's `/openapi.json` spec.
 
-Run after the service is available:
+2. **`chat_client_service_api_client/`** — a stable hand-written wrapper
+   (`ChatServiceApiClient`) that decouples the adapter from the generated client's
+   surface area, so API regeneration does not break downstream consumers.
+
+## Regenerating the client
+
+Run this against a live (or locally running) instance of `chat_client_service`:
 
 ```bash
-openapi-python-client generate --url http://localhost:8000/openapi.json --output-path components/chat_client_service_api_client
+openapi-python-client generate \
+  --url https://chat-client-service.onrender.com/openapi.json \
+  --output-path components/chat_client_service_api_client
 ```
 
-The handwritten wrapper in `chat_client_service_api_client.client` provides a stable
-surface for the adapter.
+Or locally:
+
+```bash
+uvicorn chat_client_service.app:app --port 8000 &
+openapi-python-client generate \
+  --url http://localhost:8000/openapi.json \
+  --output-path components/chat_client_service_api_client
+```

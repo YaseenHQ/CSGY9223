@@ -35,15 +35,24 @@ class DeleteMessageResponse(BaseModel):
 
 
 class OAuthLoginResponse(BaseModel):
-    """Response payload for OAuth login initiation placeholder."""
+    """Compatibility model for Telegram login initiation responses."""
 
     authorization_url: str
     state: str
 
 
 class OAuthCallbackResponse(BaseModel):
-    """Response payload for OAuth callback placeholder."""
+    """Compatibility model for Telegram login callback responses."""
 
     detail: str
     code: str | None = None
     state: str | None = None
+    access_token: str | None = None
+    token_type: str | None = None
+
+
+class OAuthTokenResponse(BaseModel):
+    """Compatibility model for issued bearer session tokens."""
+
+    access_token: str
+    token_type: str = "bearer"  # noqa: S105

@@ -67,9 +67,12 @@ class ServiceBackedChatClient(Client):
 
 
 def get_client_impl(*, interactive: bool = False) -> Client:
-    """Return adapter-backed client using service URL configuration."""
+    """Return adapter-backed client using service URL and token configuration."""
     _ = interactive
     base_url = getenv("CHAT_CLIENT_SERVICE_BASE_URL", "http://localhost:8000")
-    assert base_url
-    service_client = ChatServiceApiClient(base_url=base_url)
+    if not base_url:
+        msg = "CHAT_CLIENT_SERVICE_BASE_URL must not be empty"
+        raise ValueError(msg)
+    token = getenv("CHAT_CLIENT_SERVICE_TOKEN")
+    service_client = ChatServiceApiClient(base_url=base_url, token=token)
     return ServiceBackedChatClient(service_client=service_client)

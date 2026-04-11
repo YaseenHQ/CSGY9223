@@ -1,6 +1,6 @@
 # CS-GY-9223 Open Source
 
-A chat client interface and a Telegram implementation scaffold.
+A chat client workspace with a **shared vertical API** (git dependency) and a **Telegram** implementation.
 
 ## Team
 
@@ -22,7 +22,7 @@ A chat client interface and a Telegram implementation scaffold.
 
 ## Prerequisites
 
-- Python 3.10 or higher
+- Python 3.12 or higher (required by the shared `chat-client-api` package)
 - [uv](https://docs.astral.sh/uv/) package manager
 
 ## Installation
@@ -38,6 +38,10 @@ uv sync
 # Install with all dependencies (dev + docs)
 uv sync --all-extras
 ```
+
+The shared contract is installed from git, for example:
+
+`chat-client-api` ← [HarshithKoriRaj/Shared-API](https://github.com/HarshithKoriRaj/Shared-API) (see root `pyproject.toml` `[tool.uv.sources]`).
 
 ## Development
 
@@ -62,24 +66,37 @@ uv run mkdocs serve
 
 ```
 .
-├── components/      # Interface + implementation components
-│   ├── chat_client_api/         # chat_client_api interface component
-│   └── telegram_client_impl/    # Telegram implementation component (scaffold)
-├── tests/           # Test suite
-├── docs/            # MkDocs documentation
-├── .circleci/       # CircleCI CI/CD configuration
-├── pyproject.toml   # Project configuration
+├── components/
+│   └── telegram_client_impl/   # Telegram ChatClient implementation
+├── src/nyu_ospsd_chat/         # Root Hatch wheel meta-package
+├── tests/                      # Integration / e2e tests
+├── docs/                       # MkDocs documentation
+├── .circleci/                  # CircleCI CI/CD configuration
+├── pyproject.toml              # Project configuration
 └── README.md
 ```
 
-## Dependency Injection Usage
+## Dependency injection usage
 
 ```python
-import telegram_client_impl  # injects factory hooks into chat_client_api
+import telegram_client_impl  # registers the Telegram factory via register_client
 from chat_client_api import get_client
 
-client = get_client(interactive=False)
+client = get_client()
 ```
+
+### Opaque Telegram `message_id`
+
+Outbound `Message.message_id` values use `<chat_id>:<telegram_message_id>`. Parse with
+`split(":", 1)`. Invalid or missing messages raise `ValueError` where the shared API
+specifies it.
+
+### Environment
+
+- `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_BOT_TOKEN` — required for a live client
+- `TELEGRAM_SESSION_NAME` — optional session file basename
+- `TELEGRAM_INTERACTIVE` — set to `1` / `true` / `yes` if you use interactive-oriented
+  config (factory reads env only; there is no `get_client(interactive=...)` on the shared API)
 
 ## License
 

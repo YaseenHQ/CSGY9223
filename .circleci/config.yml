@@ -6,7 +6,7 @@ orbs:
 jobs:
   test:
     docker:
-      - image: cimg/python:3.10
+      - image: cimg/python:3.12
     environment:
       # Set TELEGRAM_E2E_ENABLED=1 to run E2E. Add TELEGRAM_API_ID,
       # TELEGRAM_API_HASH, TELEGRAM_BOT_TOKEN in CircleCI project settings.
@@ -43,7 +43,7 @@ jobs:
 
   docs:
     docker:
-      - image: cimg/python:3.10
+      - image: cimg/python:3.12
     steps:
       - checkout
       - run:

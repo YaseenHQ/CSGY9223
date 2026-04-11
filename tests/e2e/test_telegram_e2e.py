@@ -8,7 +8,7 @@ from os import getenv
 
 import pytest
 
-from chat_client_api.channel import Channel
+from chat_client_api import Channel
 
 
 @pytest.mark.e2e
@@ -28,9 +28,9 @@ def test_telegram_wiring_e2e() -> None:
     importlib.import_module("telegram_client_impl")
     get_client = importlib.import_module("chat_client_api").get_client
 
-    client = get_client(interactive=False)
+    client = get_client()
 
-    channels = list(client.get_channels())
+    channels = client.get_channels()
     assert isinstance(channels, list)
     for channel in channels:
         assert isinstance(channel, Channel)

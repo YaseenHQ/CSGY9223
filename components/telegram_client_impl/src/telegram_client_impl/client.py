@@ -1,18 +1,18 @@
-"""Telegram Client implementation for the chat_client_api.Client contract."""
+"""Telegram implementation of the shared ``ChatClient`` contract."""
 
-from collections.abc import Iterator
+from __future__ import annotations
 
+from telethon.errors import RPCError
 from telethon.sync import TelegramClient as _TeleClient
 
-from chat_client_api.channel import Channel
-from chat_client_api.client import Client
-from chat_client_api.message import Message
+from chat_client_api import Channel, ChatClient, Message
 from telegram_client_impl.config import TelegramClientConfig
 from telegram_client_impl.errors import TelegramAuthError, TelegramClientError
 from telegram_client_impl.mappers import to_channel, to_message
+from telegram_client_impl.opaque_ids import parse_telegram_message_id
 
 
-class TelegramClient(Client):
+class TelegramClient(ChatClient):
     """Telegram client backed by Telethon."""
 
     def __init__(self, *, config: TelegramClientConfig) -> None:
@@ -43,43 +43,42 @@ class TelegramClient(Client):
     def get_messages(
         self,
         channel_id: str,
-        max_results: int = 10,
-    ) -> Iterator[Message]:
+        limit: int = 10,
+        cursor: str | None = None,
+    ) -> list[Message]:
         """Retrieve messages from a Telegram channel/chat."""
+        del cursor  # Telethon path does not use cursor-based pagination here.
         _require_non_empty(value=channel_id, name="channel_id")
-        if max_results <= 0:
-            msg = "max_results must be > 0"
+        if limit <= 0:
+            msg = "limit must be > 0"
             raise ValueError(msg)
 
         self._ensure_connected()
 
         try:
-            iterator = self._get_client().iter_messages(
-                int(channel_id), limit=max_results
-            )
+            iterator = self._get_client().iter_messages(int(channel_id), limit=limit)
         except Exception as exc:  # pragma: no cover - Telethon-specific error types
             msg = f"Failed to get messages: {exc}"
             raise TelegramClientError(msg) from exc
 
-        for raw in iterator:
-            yield to_message(raw)
+        return [to_message(raw) for raw in iterator]
 
-    def delete_message(self, channel_id: str, message_id: str) -> bool:
-        """Delete a message in a Telegram channel/chat."""
-        _require_non_empty(value=channel_id, name="channel_id")
+    def delete_message(self, message_id: str) -> None:
+        """Delete a message using its opaque id."""
         _require_non_empty(value=message_id, name="message_id")
-
+        chat_id, msg_id = parse_telegram_message_id(message_id)
         self._ensure_connected()
 
         try:
-            self._get_client().delete_messages(int(channel_id), int(message_id))
+            self._get_client().delete_messages(chat_id, [msg_id])
+        except RPCError as exc:
+            msg = f"Failed to delete message: {exc}"
+            raise ValueError(msg) from exc
         except Exception as exc:  # pragma: no cover - Telethon-specific error types
             msg = f"Failed to delete message: {exc}"
-            raise TelegramClientError(msg) from exc
+            raise ValueError(msg) from exc
 
-        return True
-
-    def get_channels(self) -> Iterator[Channel]:
+    def get_channels(self) -> list[Channel]:
         """List available Telegram channels/chats."""
         self._ensure_connected()
 
@@ -89,8 +88,48 @@ class TelegramClient(Client):
             msg = f"Failed to retrieve channels: {exc}"
             raise TelegramClientError(msg) from exc
 
-        for dialog in dialogs:
-            yield to_channel(dialog)
+        return [to_channel(dialog) for dialog in dialogs]
+
+    def get_channel(self, channel_id: str) -> Channel:
+        """Return a single channel by id."""
+        _require_non_empty(value=channel_id, name="channel_id")
+        self._ensure_connected()
+        try:
+            entity = self._get_client().get_entity(int(channel_id))
+        except Exception as exc:
+            msg = f"Channel not found: {channel_id}"
+            raise ValueError(msg) from exc
+        return to_channel(entity)
+
+    def get_message(self, message_id: str) -> Message:
+        """Fetch a message by opaque id."""
+        _require_non_empty(value=message_id, name="message_id")
+        chat_id, msg_id = parse_telegram_message_id(message_id)
+        self._ensure_connected()
+
+        try:
+            fetched = self._get_client().get_messages(chat_id, ids=msg_id)
+        except RPCError as exc:
+            msg = f"Message not found: {message_id}"
+            raise ValueError(msg) from exc
+        except Exception as exc:  # pragma: no cover - Telethon-specific error types
+            msg = f"Failed to get message: {exc}"
+            raise ValueError(msg) from exc
+
+        if fetched is None:
+            msg = f"Message not found: {message_id}"
+            raise ValueError(msg)
+        if isinstance(fetched, list):
+            if not fetched:
+                msg = f"Message not found: {message_id}"
+                raise ValueError(msg)
+            raw = fetched[0]
+        else:
+            raw = fetched
+        if raw is None:
+            msg = f"Message not found: {message_id}"
+            raise ValueError(msg)
+        return to_message(raw)
 
     def _ensure_connected(self) -> None:
         """Ensure the underlying Telethon client is authenticated and connected."""
@@ -124,9 +163,9 @@ class TelegramClient(Client):
         self._connected = True
 
 
-def get_client_impl(*, interactive: bool = False) -> Client:
-    """Return the injected client factory implementation."""
-    config = TelegramClientConfig.from_env(interactive=interactive)
+def get_client_impl() -> ChatClient:
+    """Return a ``ChatClient`` instance (used by ``register_client`` and tests)."""
+    config = TelegramClientConfig.from_env()
     return TelegramClient(config=config)
 
 

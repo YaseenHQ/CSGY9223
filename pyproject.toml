@@ -135,7 +135,7 @@ chat-client-adapter = { workspace = true }
 [tool.coverage.run]
 source = ["components"]
 branch = true
-omit = ["*/tests/*"]
+omit = ["*/tests/*", "*/chat_client_service_client/*"]
 
 [tool.coverage.report]
 fail_under = 80

@@ -19,6 +19,10 @@ dev = [
     "pytest-cov>=4.1.0",
     "ruff>=0.3.0",
     "mypy>=1.8.0",
+    "fastapi>=0.115.0",
+    "pydantic>=2.8.0",
+    "httpx>=0.27.0",
+    "attrs>=23.0.0",
 ]
 docs = [
     "mkdocs>=1.5.0",
@@ -47,19 +51,42 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["chat_client_api", "telegram_client_impl", "nyu_ospsd_chat"]
+known-first-party = [
+    "chat_client_api",
+    "telegram_client_impl",
+    "nyu_ospsd_chat",
+    "chat_client_service",
+    "chat_client_service_api_client",
+    "chat_client_adapter",
+]
 
 [tool.ruff.lint.per-file-ignores]
+"components/chat_client_service_api_client/src/chat_client_service_client/**" = ["ALL"]
 "**/tests/**" = [
     "INP001",   # test directories intentionally omit __init__.py per assignment
+    "ARG002",   # stub/mock implementations of ABCs have unused params by design
+    "PLC0415",  # deferred imports inside test functions used for isolation
     "PLR2004",  # allow magic values in test assertions
+    "S105",     # "bearer" is OAuth token_type, not a password
     "S106",     # allow fake tokens in test fixtures
     "SLF001",   # allow accessing _client for mocking in tests
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "components/telegram_client_impl/tests"]
-pythonpath = [".", "components/telegram_client_impl/src"]
+testpaths = [
+    "tests",
+    "components/telegram_client_impl/tests",
+    "components/chat_client_service/tests",
+    "components/chat_client_service_api_client/tests",
+    "components/chat_client_adapter/tests",
+]
+pythonpath = [
+    ".",
+    "components/telegram_client_impl/src",
+    "components/chat_client_service/src",
+    "components/chat_client_service_api_client/src",
+    "components/chat_client_adapter/src",
+]
 markers = [
     "e2e: marks end-to-end tests that may require external credentials",
 ]
@@ -82,12 +109,28 @@ ignore_missing_imports = true
 module = "telegram_client_impl.client"
 disable_error_code = ["misc"]
 
+# Untyped shared ``chat_client_api`` base classes are treated as ``Any`` under strict mode.
+[[tool.mypy.overrides]]
+module = [
+    "chat_client_adapter.client",
+    "chat_client_adapter.models",
+]
+disable_error_code = ["misc"]
+
 [tool.uv.workspace]
-members = ["components/telegram_client_impl"]
+members = [
+    "components/telegram_client_impl",
+    "components/chat_client_service",
+    "components/chat_client_service_api_client",
+    "components/chat_client_adapter",
+]
 
 [tool.uv.sources]
 chat-client-api = { git = "https://github.com/HarshithKoriRaj/Shared-API.git" }
 telegram-client-impl = { workspace = true }
+chat-client-service = { workspace = true }
+chat-client-service-api-client = { workspace = true }
+chat-client-adapter = { workspace = true }
 
 [tool.coverage.run]
 source = ["components"]

@@ -62,12 +62,28 @@ uv run mypy components tests
 uv run mkdocs serve
 ```
 
+## Deploying to Render
+
+This repository includes a Render Blueprint at `render.yaml` for
+`chat_client_service`.
+
+1. In Render, create a new Blueprint service from this repo.
+2. Set required environment variables:
+   - `TELEGRAM_BOT_TOKEN`
+   - `SERVICE_BASE_URL` (for example `https://<your-service>.onrender.com`)
+3. Deploy and verify:
+   - `GET /health` returns `{"status":"ok"}`
+   - `GET /auth/login` redirects to Telegram OAuth
+
 ## Project Structure
 
 ```
 .
 ├── components/
-│   └── telegram_client_impl/   # Telegram ChatClient implementation
+│   ├── telegram_client_impl/              # Telegram ChatClient implementation
+│   ├── chat_client_service/               # FastAPI service wrapper
+│   ├── chat_client_service_api_client/    # Generated + stable service client
+│   └── chat_client_adapter/               # Adapter implementing shared ChatClient
 ├── src/nyu_ospsd_chat/         # Root Hatch wheel meta-package
 ├── tests/                      # Integration / e2e tests
 ├── docs/                       # MkDocs documentation

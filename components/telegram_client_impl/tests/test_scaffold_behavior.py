@@ -60,7 +60,7 @@ def test_client_methods_delegate_to_telethon() -> None:
         patch(
             "telegram_client_impl.client.to_channel",
         ) as mock_to_channel,
-        ):
+    ):
         # Arrange Telethon client on the instance.
         tele_client = MagicMock()
         tele_client.delete_messages = AsyncMock()

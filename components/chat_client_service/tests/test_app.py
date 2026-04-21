@@ -188,6 +188,20 @@ def test_get_messages_delegates_to_client(mock_chat_client: Mock) -> None:
     assert response.status_code == 200
     ids = [m["id"] for m in response.json()]
     assert ids == ["m-1", "m-2"]
+    mock_chat_client.get_messages.assert_called_once_with(channel_id="ch-1", limit=2)
+
+
+def test_get_messages_accepts_generated_client_max_results(
+    mock_chat_client: Mock,
+) -> None:
+    """GET /chat/messages keeps compatibility with generated clients."""
+    mock_chat_client.get_messages.return_value = [_message_dto(message_id="m-1")]
+
+    response = client.get("/chat/messages?channel_id=ch-1&max_results=3")
+
+    assert response.status_code == 200
+    assert response.json()[0]["id"] == "m-1"
+    mock_chat_client.get_messages.assert_called_once_with(channel_id="ch-1", limit=3)
 
 
 def test_delete_message_delegates_to_client(mock_chat_client: Mock) -> None:

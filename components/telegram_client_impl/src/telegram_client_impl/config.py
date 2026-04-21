@@ -15,6 +15,7 @@ class TelegramClientConfig:
     api_id: str | None
     api_hash: str | None
     bot_token: str | None
+    session_string: str | None = None
     session_name: str = "telegram_session"
     interactive: bool = False
 
@@ -25,6 +26,7 @@ class TelegramClientConfig:
             api_id=getenv("TELEGRAM_API_ID"),
             api_hash=getenv("TELEGRAM_API_HASH"),
             bot_token=getenv("TELEGRAM_BOT_TOKEN"),
+            session_string=getenv("TELEGRAM_SESSION_STRING"),
             session_name=getenv("TELEGRAM_SESSION_NAME", "telegram_session"),
             interactive=_env_flag("TELEGRAM_INTERACTIVE"),
         )

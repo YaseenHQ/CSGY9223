@@ -69,11 +69,28 @@ This repository includes a Render Blueprint at `render.yaml` for
 
 1. In Render, create a new Blueprint service from this repo.
 2. Set required environment variables:
+   - `TELEGRAM_API_ID`
+   - `TELEGRAM_API_HASH`
    - `TELEGRAM_BOT_TOKEN`
+   - `TELEGRAM_SESSION_STRING`
    - `SERVICE_BASE_URL` (for example `https://<your-service>.onrender.com`)
 3. Deploy and verify:
    - `GET /health` returns `{"status":"ok"}`
    - `GET /auth/login` redirects to Telegram OAuth
+
+`TELEGRAM_BOT_TOKEN` is not enough for the full chat API. It is used for Telegram
+Login Widget verification and this service's Bearer-token signing. `GET
+/chat/messages` and `GET /chat/channels` require a Telethon user session string
+generated from a Telegram user account that can see the target chat.
+
+Credential sources:
+
+- `TELEGRAM_BOT_TOKEN`: create a bot with [BotFather](https://t.me/BotFather).
+- `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`: create an app in [Telegram API development tools](https://core.telegram.org/api/obtaining_api_id).
+- `TELEGRAM_SESSION_STRING`: generate a [Telethon String Session](https://docs.telethon.dev/en/stable/concepts/sessions.html#string-sessions) from the Telegram user account used for read/list/send operations.
+
+Do not commit `.env`, `*.session`, bot tokens, API hashes, or session strings.
+Treat `TELEGRAM_SESSION_STRING` like an account password.
 
 ## Project Structure
 
@@ -109,10 +126,18 @@ specifies it.
 
 ### Environment
 
-- `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_BOT_TOKEN` — required for a live client
+- `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` — required for a live Telethon client
+- `TELEGRAM_BOT_TOKEN` — required for service login/Bearer signing; send-only fallback
+- `TELEGRAM_SESSION_STRING` — required for deployed read/list and preferred for send
 - `TELEGRAM_SESSION_NAME` — optional session file basename
 - `TELEGRAM_INTERACTIVE` — set to `1` / `true` / `yes` if you use interactive-oriented
   config (factory reads env only; there is no `get_client(interactive=...)` on the shared API)
+
+Use `channel_id="me"` only for the Telegram user's Saved Messages. To send/read
+any real group or channel, call `GET /chat/channels` with a valid Bearer token,
+find the target by `name`, and pass that returned `id` as `channel_id`.
+If an example uses `OSSHWBOTTEST`, replace it with any group or channel of your
+choice.
 
 ## License
 

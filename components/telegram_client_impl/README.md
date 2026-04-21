@@ -19,7 +19,8 @@ client = get_client()
 
 - `TELEGRAM_API_ID`
 - `TELEGRAM_API_HASH`
-- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_BOT_TOKEN` (send-only fallback when no user session is configured)
+- `TELEGRAM_SESSION_STRING` (preferred; required for read/list support)
 - `TELEGRAM_SESSION_NAME` (optional)
 - `TELEGRAM_INTERACTIVE` (optional; `1` / `true` / `yes` — see root README)
 
@@ -34,5 +35,11 @@ format.
 - `get_messages` returns a `list[Message]`; optional API `cursor` is ignored.
 - `delete_message(message_id) -> None` raises `ValueError` on failure (per shared contract).
 - `get_channel` / `get_message` raise `ValueError` when the entity or message is missing.
+- `channel_id="me"` targets Saved Messages. For any group/channel, first call
+  `get_channels()` and use the returned `Channel.channel_id`.
+
+Bot-token-only mode can send in some chats, but this implementation blocks
+read/list operations in bot mode because Telegram rejects the required history
+and dialog APIs. Use `TELEGRAM_SESSION_STRING` for full behavior.
 
 No secrets are hardcoded.

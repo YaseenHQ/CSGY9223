@@ -55,11 +55,13 @@ def send_message(
 def get_messages(
     client: Annotated[ChatClient, Depends(get_chat_client)],
     channel_id: Annotated[str, Query(min_length=1)],
-    limit: Annotated[int, Query(gt=0)] = 10,
+    limit: Annotated[int | None, Query(gt=0)] = None,
+    max_results: Annotated[int | None, Query(gt=0)] = None,
 ) -> list[MessageModel]:
     """Retrieve messages from a channel via telegram_client_impl."""
+    effective_limit = limit if limit is not None else max_results or 10
     try:
-        msgs = client.get_messages(channel_id=channel_id, limit=limit)
+        msgs = client.get_messages(channel_id=channel_id, limit=effective_limit)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

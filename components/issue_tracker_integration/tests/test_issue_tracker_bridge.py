@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import cast
 from unittest.mock import MagicMock, create_autospec
 
 import pytest
@@ -18,7 +19,7 @@ from issue_tracker_integration.client import IssueTrackerBridge, get_bridge
 
 
 def _mock_client() -> MagicMock:
-    return create_autospec(Client, instance=True)
+    return cast("MagicMock", create_autospec(Client, instance=True))
 
 
 def _mock_issue(
@@ -27,7 +28,7 @@ def _mock_issue(
     status: Status = Status.TO_DO,
     board_id: str = "board-1",
 ) -> MagicMock:
-    issue = create_autospec(Issue, instance=True)
+    issue = cast("MagicMock", create_autospec(Issue, instance=True))
     issue.id = issue_id
     issue.title = title
     issue.status = status
@@ -39,7 +40,7 @@ def _mock_issue(
 
 
 def _mock_board(board_id: str = "board-1", board_name: str = "Sprint 1") -> MagicMock:
-    board = create_autospec(Board, instance=True)
+    board = cast("MagicMock", create_autospec(Board, instance=True))
     board.id = board_id
     board.board_name = board_name
     return board
@@ -256,4 +257,4 @@ def test_get_bridge_returns_bridge() -> None:
 
 def test_get_bridge_rejects_non_client() -> None:
     with pytest.raises(IssueTrackerError):
-        get_bridge("not-a-client")  # type: ignore[arg-type]
+        get_bridge("not-a-client")

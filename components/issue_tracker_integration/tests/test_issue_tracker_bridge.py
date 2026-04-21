@@ -16,6 +16,7 @@ from issue_tracker_integration.client import IssueTrackerBridge, get_bridge
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _mock_client() -> MagicMock:
     return create_autospec(Client, instance=True)
 
@@ -47,6 +48,7 @@ def _mock_board(board_id: str = "board-1", board_name: str = "Sprint 1") -> Magi
 # ---------------------------------------------------------------------------
 # get_boards / get_board
 # ---------------------------------------------------------------------------
+
 
 def test_get_boards_delegates_to_client() -> None:
     client = _mock_client()
@@ -85,6 +87,7 @@ def test_get_board_propagates_not_found() -> None:
 # create_board / update_board / delete_board
 # ---------------------------------------------------------------------------
 
+
 def test_create_board_returns_new_board() -> None:
     client = _mock_client()
     board = _mock_board(board_name="New Board")
@@ -122,6 +125,7 @@ def test_delete_board_returns_true() -> None:
 # get_issues / get_issue
 # ---------------------------------------------------------------------------
 
+
 def test_get_issues_returns_iterator() -> None:
     client = _mock_client()
     issue = _mock_issue()
@@ -158,6 +162,7 @@ def test_get_issue_propagates_not_found() -> None:
 # ---------------------------------------------------------------------------
 # create_issue
 # ---------------------------------------------------------------------------
+
 
 def test_create_issue_minimal() -> None:
     client = _mock_client()
@@ -208,6 +213,7 @@ def test_create_issue_full_args() -> None:
 # update_issue / delete_issue
 # ---------------------------------------------------------------------------
 
+
 def test_update_issue_passes_kwargs() -> None:
     client = _mock_client()
     updated = _mock_issue(title="Updated", status=Status.COMPLETED)
@@ -240,6 +246,7 @@ def test_delete_issue_returns_true() -> None:
 # ---------------------------------------------------------------------------
 # get_bridge factory
 # ---------------------------------------------------------------------------
+
 
 def test_get_bridge_returns_bridge() -> None:
     client = _mock_client()

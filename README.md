@@ -55,30 +55,30 @@ uv run mypy components tests
 
 ## API Usage
 
-API consumers do not configure Telegram credentials. They open `/auth/login`,
-complete Telegram login, and call `/chat/*` with the issued Bearer token.
+API consumers do not configure Telegram credentials. They create an auth session,
+complete Telegram login, then call `/chat/*` with `X-Session-ID`. Direct Bearer
+tokens from `/auth/callback` are still accepted for compatibility.
 
 ## Service Configuration
 
-For the default Telegram Login library path, the shared service needs its
-service-owned bot token and BotFather Web Login Client ID. API users do not set
-any of these values.
+For Render, the shared service needs one service-owned bot and Web Login client.
+API users do not set Telegram credentials; they only log in through `/auth/*`.
 
 | Variable | Purpose |
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | Bot token from [@BotFather](https://t.me/BotFather), used for Bot API send/delete/webhook calls. |
 | `TELEGRAM_OIDC_CLIENT_ID` | Web Login Client ID from BotFather, passed to `Telegram.Login.init(...)` and used as the ID-token audience. |
+| `SERVICE_BASE_URL` | Render URL, e.g. `https://your-service.onrender.com`; used for login URLs and webhook setup. |
+| `TELEGRAM_WEBHOOK_SECRET` | Random webhook secret checked on `/telegram/webhook`. |
+| `APP_SESSION_SECRET` | Random secret for signing local API sessions. |
+| `CHAT_CLIENT_STORE_PATH` | SQLite store path. Use `/var/data/chat_client.sqlite3` on Render. |
 
 Optional deployment settings:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `APP_SESSION_SECRET` | `TELEGRAM_BOT_TOKEN` | Override for signing local Bearer tokens. Recommended for production rotation separation. |
-| `TELEGRAM_OIDC_CLIENT_SECRET` | unset | Required only for the OIDC Authorization Code Flow at `GET /auth/login`. The Telegram Login JS library path does not use it. |
-| `SERVICE_BASE_URL` | `http://localhost:8000` | Required for redirect flow and webhook setup; register `${SERVICE_BASE_URL}/auth/callback` in BotFather Web Login allowed URLs. |
 | `APP_SESSION_TTL_SECONDS` | `3600` | Local Bearer token lifetime. |
-| `CHAT_CLIENT_STORE_PATH` | `.data/chat_client.sqlite3` | SQLite store path. Use `/var/data/chat_client.sqlite3` on Render. |
-| `TELEGRAM_WEBHOOK_SECRET` | unset | Required for webhook setup and checked on `/telegram/webhook`. |
+| `TELEGRAM_OIDC_CLIENT_SECRET` | unset | Required only for `GET /auth/login?flow=code`. The default login page does not use it. |
 | `TELEGRAM_WEBHOOK_ALLOWED_UPDATES` | `message,edited_message,channel_post,edited_channel_post,my_chat_member` | Comma-separated Bot API update types for webhook setup. |
 | `TELEGRAM_WEBHOOK_DROP_PENDING_UPDATES` | unset | Set to `true` to discard pending updates while configuring the webhook. |
 | `TELEGRAM_BOT_API_BASE_URL` | `https://api.telegram.org` | Override only for a custom Bot API server. |
@@ -87,16 +87,26 @@ Telegram documents the Login library and OIDC setup in
 [Log In With Telegram](https://core.telegram.org/bots/telegram-login).
 The current page says the legacy iframe-based widget docs are archived; this
 project uses the current `Telegram.Login` library and OIDC ID-token validation.
+In BotFather Web Login settings, register the Render service origin
+(`https://your-service.onrender.com`). Register
+`${SERVICE_BASE_URL}/auth/callback` only if you enable `?flow=code`.
 
-Primary login path for custom frontends:
+Primary session-first login path:
 
-1. Call `GET /auth/login/config`.
-2. Pass `client_id` and `nonce` to `Telegram.Login.init(...)`.
-3. Send Telegram's callback `id_token` and the same `nonce` to
+1. Call `POST /auth/sessions`.
+2. Open the returned `login_url`.
+3. Complete Telegram login in the service-hosted page.
+4. Poll `GET /auth/sessions/{session_id}` until `authenticated: true`.
+5. Use `X-Session-ID: <session_id>` on `/chat/*`.
+
+Custom frontends can instead call `GET /auth/login/config?session_id=...`, pass
+`client_id` and `nonce` to `Telegram.Login.init(...)`, then send Telegram's
+callback `id_token` and the same `nonce` to
    `POST /auth/callback`.
-4. Use the returned Bearer token on `/chat/*`.
 
-OIDC-compatible clients can instead use `GET /auth/login`, which performs
+Manual clients may also use the returned Bearer token directly on `/chat/*`.
+
+OIDC-compatible clients can use `GET /auth/login?flow=code`, which performs
 Authorization Code Flow with PKCE and requires `TELEGRAM_OIDC_CLIENT_SECRET`.
 
 Chat endpoints are bot-scoped: sends/deletes use the official Bot API, and reads

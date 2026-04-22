@@ -271,8 +271,28 @@ def test_telegram_webhook_checks_secret(
     assert good_response.status_code == 204
 
 
-def test_auth_login_redirects_to_telegram_oidc(client: TestClient) -> None:
-    """Login starts the Telegram OIDC Authorization Code Flow."""
+def test_auth_login_serves_telegram_login_page(client: TestClient) -> None:
+    """Default login uses Telegram.Login without requiring a client secret."""
+    config = OidcConfig(
+        client_id="123",
+        client_secret=None,
+        service_base_url="https://example.com",
+        app_session_secret="app-secret",
+    )
+    app.dependency_overrides[get_oidc_config] = lambda: config
+
+    response = client.get("/auth/login")
+
+    assert response.status_code == 200
+    assert "https://oauth.telegram.org/js/telegram-login.js?3" in response.text
+    assert "Telegram.Login.init" in response.text
+    assert 'request_access: ["write"]' in response.text
+
+
+def test_auth_login_code_flow_redirects_to_telegram_oidc(
+    client: TestClient,
+) -> None:
+    """Explicit code flow starts the Telegram OIDC Authorization Code Flow."""
     config = OidcConfig(
         client_id="client-id",
         client_secret="secret",
@@ -281,7 +301,11 @@ def test_auth_login_redirects_to_telegram_oidc(client: TestClient) -> None:
     )
     app.dependency_overrides[get_oidc_config] = lambda: config
 
-    response = client.get("/auth/login", follow_redirects=False)
+    response = client.get(
+        "/auth/login",
+        params={"flow": "code"},
+        follow_redirects=False,
+    )
 
     assert response.status_code == 302
     location = response.headers["location"]
@@ -330,7 +354,7 @@ def test_auth_callback_issues_local_token(client: TestClient) -> None:
 
     with patch(
         "chat_client_service.routers.auth.complete_login",
-        return_value=token,
+        return_value=(token, None),
     ):
         response = client.get("/auth/callback", params={"code": "c", "state": "s"})
 
@@ -371,6 +395,96 @@ def test_auth_login_library_callback_issues_local_token(client: TestClient) -> N
     )
     assert claims is not None
     assert claims["telegram_id"] == "42"
+
+
+def test_auth_session_flow_authenticates_chat_with_session_header(
+    client: TestClient,
+) -> None:
+    """Adapter-style session auth works without changing chat endpoints."""
+    config = OidcConfig(
+        client_id="123",
+        client_secret=None,
+        service_base_url="https://example.com",
+        app_session_secret="app-secret",
+    )
+    app.dependency_overrides[get_oidc_config] = lambda: config
+    service_client = Mock()
+    service_client.send_message.return_value = _message()
+    app.dependency_overrides[get_chat_client] = lambda: service_client
+
+    session_response = client.post("/auth/sessions")
+    session_payload = session_response.json()
+    session_id = session_payload["session_id"]
+
+    config_response = client.get(
+        "/auth/login/config",
+        params={"session_id": session_id},
+    )
+    nonce = config_response.json()["nonce"]
+
+    with patch(
+        "chat_client_service.oidc.verify_id_token",
+        return_value={
+            "id": 42,
+            "sub": "oidc-sub",
+            "preferred_username": "alice",
+            "name": "Alice",
+        },
+    ):
+        callback_response = client.post(
+            "/auth/callback",
+            json={"id_token": "telegram-id-token", "nonce": nonce},
+        )
+
+    status_response = client.get(f"/auth/sessions/{session_id}")
+    chat_response = client.post(
+        "/chat/messages",
+        headers={"X-Session-ID": session_id},
+        json={"channel_id": "me", "text": "hello"},
+    )
+
+    assert session_response.status_code == 201
+    assert session_payload["authenticated"] is False
+    assert session_payload["login_url"].endswith(f"/auth/login?session_id={session_id}")
+    assert callback_response.status_code == 200
+    assert "access_token" in callback_response.json()
+    assert status_response.json()["authenticated"] is True
+    assert status_response.json()["telegram_id"] == "42"
+    assert chat_response.status_code == 200
+    service_client.send_message.assert_called_once_with("42", "hello")
+
+
+def test_auth_session_logout_rejects_session_header(client: TestClient) -> None:
+    """Deleting a service auth session invalidates X-Session-ID auth."""
+    config = OidcConfig(
+        client_id="client-id",
+        client_secret="secret",
+        service_base_url="https://example.com",
+        app_session_secret="app-secret",
+    )
+    token = issue_app_token(
+        config=config,
+        claims={"id": 42, "sub": "oidc-sub", "preferred_username": "alice"},
+    )
+    app.dependency_overrides[get_oidc_config] = lambda: config
+    get_store().create_auth_session(session_id="session-1", created_at=1)
+    claims = decode_app_token(config=config, token=token)
+    assert claims is not None
+    get_store().authenticate_session(
+        session_id="session-1",
+        token=token,
+        claims=claims,
+    )
+
+    delete_response = client.delete("/auth/sessions/session-1")
+    chat_response = client.get(
+        "/chat/channels",
+        headers={"X-Session-ID": "session-1"},
+    )
+
+    assert delete_response.status_code == 200
+    assert delete_response.json() == {"success": True}
+    assert chat_response.status_code == 401
 
 
 def test_auth_me_decodes_local_token(client: TestClient) -> None:
@@ -483,11 +597,12 @@ def test_complete_login_exchanges_code_and_issues_token() -> None:
             },
         ) as verify_id_token,
     ):
-        token = complete_login(config=config, code="code", state=state)
+        token, session_id = complete_login(config=config, code="code", state=state)
 
     claims = decode_app_token(config=config, token=token)
     assert claims is not None
     assert claims["telegram_id"] == "42"
+    assert session_id is None
     exchange_code.assert_called_once()
     verify_id_token.assert_called_once()
     assert verify_id_token.call_args.kwargs["nonce"]

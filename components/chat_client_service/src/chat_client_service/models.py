@@ -40,6 +40,31 @@ class DeleteMessageResponse(BaseModel):
     success: bool
 
 
+class AuthSessionResponse(BaseModel):
+    """Pending service auth session response."""
+
+    session_id: str
+    authenticated: bool
+    login_url: str
+    status_url: str
+
+
+class AuthSessionStatusResponse(BaseModel):
+    """Current service auth session state."""
+
+    session_id: str
+    authenticated: bool
+    telegram_id: str | None = None
+    username: str | None = None
+    name: str | None = None
+
+
+class LogoutResponse(BaseModel):
+    """Service auth session deletion response."""
+
+    success: bool
+
+
 class TokenResponse(BaseModel):
     """Bearer token issued by this service after Telegram OIDC login."""
 

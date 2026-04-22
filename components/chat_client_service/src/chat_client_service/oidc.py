@@ -64,7 +64,11 @@ _STATE_TTL_SECONDS = 300
 _LOGIN_LIBRARY_VERIFIER = "telegram-login-library"
 
 
-def begin_login(config: OidcConfig) -> tuple[str, str]:
+def begin_login(
+    config: OidcConfig,
+    *,
+    session_id: str | None = None,
+) -> tuple[str, str]:
     """Create a Telegram OIDC authorization URL and CSRF state."""
     _require_oidc_config(config)
     state = secrets.token_urlsafe(32)
@@ -76,6 +80,7 @@ def begin_login(config: OidcConfig) -> tuple[str, str]:
             code_verifier=code_verifier,
             nonce=nonce,
             created_at=int(time.time()),
+            session_id=session_id,
         )
     )
     challenge = _pkce_challenge(code_verifier)
@@ -92,7 +97,11 @@ def begin_login(config: OidcConfig) -> tuple[str, str]:
     return f"{config.authorization_endpoint}?{urlencode(params)}", state
 
 
-def begin_login_library(config: OidcConfig) -> tuple[str, str]:
+def begin_login_library(
+    config: OidcConfig,
+    *,
+    session_id: str | None = None,
+) -> tuple[str, str]:
     """Create nonce data for Telegram.Login JavaScript library auth."""
     _require_client_id(config)
     nonce = secrets.token_urlsafe(32)
@@ -102,6 +111,7 @@ def begin_login_library(config: OidcConfig) -> tuple[str, str]:
             code_verifier=_LOGIN_LIBRARY_VERIFIER,
             nonce=nonce,
             created_at=int(time.time()),
+            session_id=session_id,
         )
     )
     return str(config.client_id), nonce
@@ -112,7 +122,7 @@ def complete_login_library(
     config: OidcConfig,
     id_token: str,
     nonce: str,
-) -> str:
+) -> tuple[str, str | None]:
     """Verify a Telegram.Login id_token and issue a local Bearer token."""
     _require_client_id(config)
     pending = get_store().consume_oidc_state(
@@ -124,10 +134,12 @@ def complete_login_library(
         msg = "Invalid or expired Telegram Login nonce"
         raise ValueError(msg)
     claims = verify_id_token(config=config, id_token=id_token, nonce=pending.nonce)
-    return issue_app_token(config=config, claims=claims)
+    return issue_app_token(config=config, claims=claims), pending.session_id
 
 
-def complete_login(*, config: OidcConfig, code: str, state: str) -> str:
+def complete_login(
+    *, config: OidcConfig, code: str, state: str
+) -> tuple[str, str | None]:
     """Exchange the OIDC code and issue a local app Bearer token."""
     _require_oidc_config(config)
     pending = get_store().consume_oidc_state(
@@ -149,7 +161,7 @@ def complete_login(*, config: OidcConfig, code: str, state: str) -> str:
         msg = "Telegram token response did not include id_token"
         raise TypeError(msg)
     claims = verify_id_token(config=config, id_token=id_token, nonce=pending.nonce)
-    return issue_app_token(config=config, claims=claims)
+    return issue_app_token(config=config, claims=claims), pending.session_id
 
 
 def verify_id_token(

@@ -41,6 +41,19 @@ class StoredOidcState:
     code_verifier: str
     nonce: str
     created_at: int
+    session_id: str | None = None
+
+
+@dataclass(frozen=True)
+class StoredAuthSession:
+    """Service auth session for adapter-style clients."""
+
+    session_id: str
+    token: str | None
+    telegram_id: str | None
+    username: str | None
+    name: str | None
+    created_at: int
 
 
 class BotUpdateStore:
@@ -90,10 +103,25 @@ class BotUpdateStore:
                     state TEXT PRIMARY KEY,
                     code_verifier TEXT NOT NULL,
                     nonce TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    session_id TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS auth_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    token TEXT,
+                    telegram_id TEXT,
+                    username TEXT,
+                    name TEXT,
                     created_at INTEGER NOT NULL
                 );
                 """
             )
+            try:
+                self._conn.execute("ALTER TABLE oidc_states ADD COLUMN session_id TEXT")
+            except sqlite3.OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
 
     def clear(self) -> None:
         """Clear process-local test state."""
@@ -104,6 +132,7 @@ class BotUpdateStore:
                 DELETE FROM channels;
                 DELETE FROM chat_access;
                 DELETE FROM oidc_states;
+                DELETE FROM auth_sessions;
                 """
             )
 
@@ -267,10 +296,16 @@ class BotUpdateStore:
             self._conn.execute(
                 """
                 INSERT OR REPLACE INTO oidc_states
-                    (state, code_verifier, nonce, created_at)
-                VALUES (?, ?, ?, ?)
+                    (state, code_verifier, nonce, created_at, session_id)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (state.state, state.code_verifier, state.nonce, state.created_at),
+                (
+                    state.state,
+                    state.code_verifier,
+                    state.nonce,
+                    state.created_at,
+                    state.session_id,
+                ),
             )
 
     def consume_oidc_state(
@@ -284,7 +319,7 @@ class BotUpdateStore:
         with self._lock, self._conn:
             row = self._conn.execute(
                 """
-                SELECT state, code_verifier, nonce, created_at
+                SELECT state, code_verifier, nonce, created_at, session_id
                 FROM oidc_states
                 WHERE state = ?
                 """,
@@ -302,7 +337,86 @@ class BotUpdateStore:
             code_verifier=str(row["code_verifier"]),
             nonce=str(row["nonce"]),
             created_at=int(row["created_at"]),
+            session_id=str(row["session_id"])
+            if row["session_id"] is not None
+            else None,
         )
+
+    def create_auth_session(self, *, session_id: str, created_at: int) -> None:
+        """Create a pending service auth session."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO auth_sessions
+                    (session_id, token, telegram_id, username, name, created_at)
+                VALUES (?, NULL, NULL, NULL, NULL, ?)
+                """,
+                (session_id, created_at),
+            )
+
+    def get_auth_session(self, *, session_id: str) -> StoredAuthSession | None:
+        """Return a service auth session by ID."""
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT session_id, token, telegram_id, username, name, created_at
+                FROM auth_sessions
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return StoredAuthSession(
+            session_id=str(row["session_id"]),
+            token=str(row["token"]) if row["token"] is not None else None,
+            telegram_id=(
+                str(row["telegram_id"]) if row["telegram_id"] is not None else None
+            ),
+            username=str(row["username"]) if row["username"] is not None else None,
+            name=str(row["name"]) if row["name"] is not None else None,
+            created_at=int(row["created_at"]),
+        )
+
+    def authenticate_session(
+        self,
+        *,
+        session_id: str,
+        token: str,
+        claims: dict[str, str],
+    ) -> StoredAuthSession | None:
+        """Attach local auth claims to a pending service auth session."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                UPDATE auth_sessions
+                SET token = ?, telegram_id = ?, username = ?, name = ?
+                WHERE session_id = ?
+                """,
+                (
+                    token,
+                    claims.get("telegram_id"),
+                    claims.get("username"),
+                    claims.get("name"),
+                    session_id,
+                ),
+            )
+        return self.get_auth_session(session_id=session_id)
+
+    def delete_auth_session(self, *, session_id: str) -> None:
+        """Delete a service auth session."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "DELETE FROM auth_sessions WHERE session_id = ?",
+                (session_id,),
+            )
+
+    def token_for_session(self, *, session_id: str) -> str | None:
+        """Return the local Bearer token stored for an authenticated session."""
+        session = self.get_auth_session(session_id=session_id)
+        if session is None:
+            return None
+        return session.token
 
 
 _STORE: BotUpdateStore | None = None

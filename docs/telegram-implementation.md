@@ -25,33 +25,38 @@ This branch implements both login paths documented on Telegram's
 
 Primary Telegram Login library path:
 
-- `GET /auth/login/config` returns a server-generated `nonce` and Telegram
+- `POST /auth/sessions` creates a pending service session.
+- `GET /auth/login/config?session_id=...` returns a server-generated `nonce` and Telegram
   Login `client_id`.
 - A frontend passes those values to `Telegram.Login.init(...)`.
 - Telegram returns an `id_token` to the frontend callback.
 - `POST /auth/callback` verifies that `id_token` server-side, checks the nonce,
-  and returns this service's Bearer token.
+  authenticates the session, and returns this service's Bearer token.
+- Adapter-style clients poll `GET /auth/sessions/{session_id}` and use
+  `X-Session-ID` on `/chat/*`; direct Bearer tokens remain supported.
 
-OIDC Authorization Code Flow is also available for OIDC-compatible clients:
+The default `GET /auth/login` route serves a minimal Telegram Login page. OIDC
+Authorization Code Flow is also available for OIDC-compatible clients:
 
-- `GET /auth/login` redirects users to Telegram OIDC.
+- `GET /auth/login?flow=code` redirects users to Telegram OIDC.
 - `GET /auth/callback` exchanges the code, validates `id_token`, and checks the
   OIDC nonce.
-- The service issues its own Bearer token for `/chat/*`.
+- The service authenticates the bound session when `session_id` was supplied and
+  issues its own Bearer token for compatibility.
 
-Required service-owned environment variables for the Login library path:
+Required service-owned Render environment variables:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_OIDC_CLIENT_ID`
+- `SERVICE_BASE_URL`
+- `TELEGRAM_WEBHOOK_SECRET`
+- `APP_SESSION_SECRET`
+- `CHAT_CLIENT_STORE_PATH`
 
 Optional deployment settings:
 
-- `APP_SESSION_SECRET` (local Bearer signing override; defaults to bot token)
-- `TELEGRAM_OIDC_CLIENT_SECRET` (required only for `GET /auth/login`)
-- `SERVICE_BASE_URL` (required for redirect flow and webhook setup)
 - `APP_SESSION_TTL_SECONDS` (optional)
-- `CHAT_CLIENT_STORE_PATH` (optional SQLite path)
-- `TELEGRAM_WEBHOOK_SECRET` (required for deployed webhooks)
+- `TELEGRAM_OIDC_CLIENT_SECRET` (required only for `GET /auth/login?flow=code`)
 - `TELEGRAM_WEBHOOK_ALLOWED_UPDATES` (optional comma-separated update types)
 - `TELEGRAM_WEBHOOK_DROP_PENDING_UPDATES` (optional webhook setup flag)
 

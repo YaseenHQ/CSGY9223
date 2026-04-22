@@ -59,6 +59,9 @@ through this service.
 ## Service Component: `chat_client_service`
 
 - `GET /health`
+- `POST /auth/sessions`
+- `GET /auth/sessions/{session_id}`
+- `DELETE /auth/sessions/{session_id}`
 - `GET /auth/login`
 - `GET /auth/login/config`
 - `GET /auth/callback`
@@ -70,7 +73,12 @@ through this service.
 - `DELETE /chat/messages/{message_id}`
 - `POST /telegram/webhook`
 
-All `/chat/*` routes require `Authorization: Bearer <token>` from `/auth/login`.
+`GET /auth/login` serves the default Telegram Login page. Use
+`GET /auth/login?flow=code` only for OIDC clients that need Authorization Code
+Flow and have `TELEGRAM_OIDC_CLIENT_SECRET` configured.
+
+All `/chat/*` routes require either `X-Session-ID: <session_id>` from
+`POST /auth/sessions` or `Authorization: Bearer <token>` from `/auth/callback`.
 Use `channel_id=me` for the logged-in user's direct chat with the bot, or a
 Telegram chat ID for a group/channel where the bot is present and has observed
 that user through webhook updates or can verify membership with Bot API

@@ -133,7 +133,9 @@ def test_chat_routes_delegate_to_client(client: TestClient) -> None:
     """Protected chat routes preserve the public endpoint contract."""
     service_client = Mock()
     service_client.send_message.return_value = _message()
+    service_client.get_message.return_value = _message()
     service_client.get_messages.return_value = iter([_message()])
+    service_client.get_channel.return_value = _channel()
     service_client.get_channels.return_value = iter([_channel()])
     service_client.delete_message.return_value = True
     app.dependency_overrides[get_current_claims] = _allow_auth
@@ -145,16 +147,24 @@ def test_chat_routes_delegate_to_client(client: TestClient) -> None:
         json={"channel_id": "123", "text": "hello"},
     )
     get_response = client.get("/chat/messages", params={"channel_id": "123"})
+    get_one_response = client.get("/chat/messages/123:5")
     channels_response = client.get("/chat/channels")
+    channel_response = client.get("/chat/channels/123")
     delete_response = client.delete("/chat/messages/5", params={"channel_id": "123"})
 
     assert send_response.status_code == 200
     assert get_response.status_code == 200
+    assert get_one_response.status_code == 200
     assert channels_response.status_code == 200
+    assert channel_response.status_code == 200
     assert delete_response.status_code == 200
     assert send_response.json()["id"] == "123:5"
+    assert get_one_response.json()["id"] == "123:5"
     assert channels_response.json()[0]["name"] == "OSSHWBOTTEST"
+    assert channel_response.json()["name"] == "OSSHWBOTTEST"
     assert delete_response.json() == {"success": True}
+    service_client.get_message.assert_called_once_with("123:5")
+    service_client.get_channel.assert_called_once_with("123")
     service_client.delete_message.assert_called_once_with(message_id="123:5")
 
 
@@ -167,6 +177,22 @@ def test_chat_delete_accepts_returned_opaque_message_id(client: TestClient) -> N
     get_store().grant_access(telegram_id="42", channel_id="123")
 
     response = client.delete("/chat/messages/123:5")
+
+    assert response.status_code == 200
+    service_client.delete_message.assert_called_once_with(message_id="123:5")
+
+
+def test_chat_delete_accepts_opaque_message_id_with_channel_query(
+    client: TestClient,
+) -> None:
+    """Delete tolerates clients passing both opaque id and channel_id."""
+    service_client = Mock()
+    service_client.delete_message.return_value = True
+    app.dependency_overrides[get_current_claims] = _allow_auth
+    app.dependency_overrides[get_chat_client] = lambda: service_client
+    get_store().grant_access(telegram_id="42", channel_id="123")
+
+    response = client.delete("/chat/messages/123:5", params={"channel_id": "123"})
 
     assert response.status_code == 200
     service_client.delete_message.assert_called_once_with(message_id="123:5")

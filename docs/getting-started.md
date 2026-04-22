@@ -44,9 +44,9 @@ Users of the hosted API do not set environment variables. They create
 `/auth/sessions`, open the returned `login_url`, and use `X-Session-ID` on
 `/chat/*`.
 
-Only the service deployer sets Telegram credentials. The service derives OIDC
-client credentials from the bot token's `bot_id:secret` parts unless explicit
-overrides are set.
+Only the service deployer sets Telegram credentials. The service derives the
+Telegram Login Client ID from the bot token's numeric prefix unless an explicit
+override is set.
 
 ```bash
 export TELEGRAM_BOT_TOKEN=...
@@ -59,8 +59,8 @@ Optional deployment settings:
   `TELEGRAM_BOT_TOKEN`.
 - `TELEGRAM_OIDC_CLIENT_ID`: optional override; defaults to the bot token's
   numeric prefix.
-- `TELEGRAM_OIDC_CLIENT_SECRET`: optional override; defaults to the bot token's
-  secret suffix.
+- `TELEGRAM_OIDC_CLIENT_SECRET`: optional override only if BotFather Web Login
+  shows a separate Client Secret.
 - `SERVICE_BASE_URL`: required for redirect flow and webhook setup.
 - `APP_SESSION_TTL_SECONDS`: local Bearer token lifetime, default `3600`.
 - `CHAT_CLIENT_STORE_PATH`: SQLite path, default `.data/chat_client.sqlite3`.
@@ -82,7 +82,8 @@ Optional deployment settings:
 4. Add redirect URIs such as `${SERVICE_BASE_URL}/auth/callback`.
 5. If BotFather Web Login shows separate Client ID or Client Secret values, set
    `TELEGRAM_OIDC_CLIENT_ID` or `TELEGRAM_OIDC_CLIENT_SECRET`; otherwise leave
-   both unset.
+   both unset. The bot token's numeric prefix is enough for the hosted login
+   page used by `POST /auth/sessions`.
 6. Configure the webhook after deploy:
 
 ```bash

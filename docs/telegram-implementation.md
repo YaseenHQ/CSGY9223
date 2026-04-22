@@ -26,22 +26,21 @@ This branch implements both login paths documented on Telegram's
 Primary session path:
 
 - `POST /auth/sessions` creates a pending service session.
-- `GET /auth/login?session_id=...` starts Telegram OIDC Authorization Code
-  Flow with PKCE when bot credentials are configured.
+- `GET /auth/login?session_id=...&flow=page` starts the hosted Telegram Login
+  page using the service bot's login Client ID.
 - `GET /auth/login/config?session_id=...` remains available for custom
   frontends using Telegram's Login library.
 - The config endpoint returns a server-generated `nonce` and Telegram Login
   `client_id`.
 - A frontend passes those values to `Telegram.Login.init(...)`.
-- Telegram returns an `id_token` to the frontend callback.
-- `POST /auth/callback` verifies that `id_token` server-side, checks the nonce,
+- Telegram returns either an `id_token` or a signed login payload to the browser.
+- `POST /auth/callback` or `POST /auth/telegram-login` verifies that payload,
   authenticates the session, and returns this service's Bearer token.
 - Adapter-style clients poll `GET /auth/sessions/{session_id}` and use
   `X-Session-ID` on `/chat/*`; direct Bearer tokens remain supported.
 
-OIDC Authorization Code Flow uses Telegram's `bot_id:secret` token parts as
-default client credentials, with env overrides available if BotFather Web Login
-shows separate values:
+OIDC Authorization Code Flow is still available when explicit client
+credentials are configured:
 
 - `GET /auth/login?flow=code` redirects users to Telegram OIDC.
 - `GET /auth/login?flow=page` serves the fallback hosted Telegram Login page.
@@ -61,7 +60,7 @@ Optional deployment settings:
 - `APP_SESSION_SECRET` (optional signing override; defaults to bot token)
 - `APP_SESSION_TTL_SECONDS` (optional)
 - `TELEGRAM_OIDC_CLIENT_ID` (optional override; defaults to bot token numeric id)
-- `TELEGRAM_OIDC_CLIENT_SECRET` (optional override; defaults to bot token suffix)
+- `TELEGRAM_OIDC_CLIENT_SECRET` (optional override only for explicit code flow)
 - `TELEGRAM_WEBHOOK_SECRET` (optional webhook hardening)
 - `TELEGRAM_WEBHOOK_ALLOWED_UPDATES` (optional comma-separated update types)
 - `TELEGRAM_WEBHOOK_DROP_PENDING_UPDATES` (optional webhook setup flag)
@@ -76,7 +75,10 @@ Therefore:
 
 - `POST /chat/messages` sends through the service bot.
 - `GET /chat/messages` returns messages the bot observed or sent.
+- `GET /chat/messages/{message_id}` returns one observed or sent message by
+  opaque id.
 - `GET /chat/channels` returns chats known to the bot.
+- `GET /chat/channels/{channel_id}` returns one known chat.
 - `DELETE /chat/messages/{message_id}` works when Telegram allows the bot to
   delete that message.
 

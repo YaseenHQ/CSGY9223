@@ -77,7 +77,7 @@ Optional deployment settings:
 | `APP_SESSION_SECRET` | `TELEGRAM_BOT_TOKEN` | Override for signing local API sessions. |
 | `APP_SESSION_TTL_SECONDS` | `3600` | Local Bearer token lifetime. |
 | `TELEGRAM_OIDC_CLIENT_ID` | bot token numeric prefix | Optional override if BotFather Web Login shows a separate Client ID. |
-| `TELEGRAM_OIDC_CLIENT_SECRET` | bot token suffix | Optional override if BotFather Web Login shows a separate Client Secret. |
+| `TELEGRAM_OIDC_CLIENT_SECRET` | unset | Optional override only if BotFather Web Login shows a separate Client Secret. |
 | `TELEGRAM_WEBHOOK_SECRET` | unset | Optional webhook hardening. If set, Telegram must send the same secret header. |
 | `TELEGRAM_WEBHOOK_ALLOWED_UPDATES` | `message,edited_message,channel_post,edited_channel_post,my_chat_member` | Comma-separated Bot API update types for webhook setup. |
 | `TELEGRAM_WEBHOOK_DROP_PENDING_UPDATES` | unset | Set to `true` to discard pending updates while configuring the webhook. |
@@ -91,15 +91,16 @@ available and keeps the Login library page as a fallback.
 In BotFather Web Login settings, register the Render service origin
 (`https://your-service.onrender.com`) and `${SERVICE_BASE_URL}/auth/callback`.
 Leave `TELEGRAM_OIDC_CLIENT_ID` and `TELEGRAM_OIDC_CLIENT_SECRET` unset unless
-BotFather Web Login shows separate values; by default the service uses the bot
-token's `bot_id:secret` parts as OIDC client credentials.
+BotFather Web Login shows separate values. By default, the service derives only
+the login Client ID from the bot token's numeric prefix and uses the hosted
+Telegram Login page for API sessions.
 
 Primary session-first login path:
 
 1. Call `POST /auth/sessions`.
 2. Open the returned `login_url`.
 3. Complete Telegram login. With `TELEGRAM_BOT_TOKEN` set, this uses Telegram
-   OIDC Authorization Code Flow with PKCE.
+   Login and validates Telegram's signed identity payload server-side.
 4. Poll `GET /auth/sessions/{session_id}` until `authenticated: true`.
 5. Use `X-Session-ID: <session_id>` on `/chat/*`.
 

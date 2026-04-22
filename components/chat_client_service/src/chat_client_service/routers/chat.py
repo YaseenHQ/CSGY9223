@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 import telegram_client_impl  # noqa: F401  # factory injection side effect
 from chat_client_api import Channel, Client, Message, get_client
@@ -56,17 +56,19 @@ def get_messages(
     channel_id: str,
     claims: Annotated[dict[str, str], Depends(get_current_claims)],
     client: Annotated[Client, Depends(get_chat_client)],
-    max_results: int = 10,
+    limit: Annotated[int | None, Query(gt=0)] = None,
+    max_results: Annotated[int | None, Query(gt=0)] = None,
 ) -> list[MessageModel]:
     """Return bot-observed messages for a known Telegram chat."""
     channel_id = _resolve_channel_id(claims=claims, channel_id=channel_id)
     _require_channel_access(claims=claims, channel_id=channel_id, client=client)
+    requested_limit = limit if limit is not None else (max_results or 10)
     try:
         return [
             _message_model(message)
             for message in client.get_messages(
                 channel_id=channel_id,
-                limit=max_results,
+                limit=requested_limit,
             )
         ]
     except Exception as exc:
@@ -74,6 +76,29 @@ def get_messages(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
+
+
+@router.get("/messages/{message_id}")
+def get_message(
+    message_id: str,
+    claims: Annotated[dict[str, str], Depends(get_current_claims)],
+    client: Annotated[Client, Depends(get_chat_client)],
+) -> MessageModel:
+    """Return one bot-observed message by its opaque ID."""
+    try:
+        message = client.get_message(message_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    _require_channel_access(claims=claims, channel_id=message.channel_id, client=client)
+    return _message_model(message)
 
 
 @router.delete("/messages/{message_id}")
@@ -112,6 +137,29 @@ def get_channels(
             for channel in client.get_channels()
             if _can_access_channel(claims=claims, channel_id=channel.id, client=client)
         ]
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+
+
+@router.get("/channels/{channel_id}")
+def get_channel(
+    channel_id: str,
+    claims: Annotated[dict[str, str], Depends(get_current_claims)],
+    client: Annotated[Client, Depends(get_chat_client)],
+) -> ChannelModel:
+    """Return one chat known to the service bot."""
+    channel_id = _resolve_channel_id(claims=claims, channel_id=channel_id)
+    _require_channel_access(claims=claims, channel_id=channel_id, client=client)
+    try:
+        return _channel_model(client.get_channel(channel_id))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -192,7 +240,20 @@ def _resolve_delete_reference(
     channel_id: str | None,
 ) -> tuple[str, str]:
     if channel_id is not None:
-        return _resolve_channel_id(claims=claims, channel_id=channel_id), message_id
+        resolved_channel_id = _resolve_channel_id(claims=claims, channel_id=channel_id)
+        if ":" in message_id:
+            embedded_channel_id, provider_message_id = message_id.split(":", 1)
+            embedded_channel_id = _resolve_channel_id(
+                claims=claims,
+                channel_id=embedded_channel_id,
+            )
+            if embedded_channel_id != resolved_channel_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="message_id channel does not match channel_id",
+                )
+            return resolved_channel_id, provider_message_id
+        return resolved_channel_id, message_id
     if ":" in message_id:
         resolved_channel_id, provider_message_id = message_id.split(":", 1)
         return (

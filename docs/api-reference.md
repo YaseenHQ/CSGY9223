@@ -68,16 +68,18 @@ through this service.
 - `POST /auth/callback`
 - `GET /auth/me`
 - `GET /chat/channels`
+- `GET /chat/channels/{channel_id}`
 - `POST /chat/messages`
 - `GET /chat/messages`
+- `GET /chat/messages/{message_id}`
 - `DELETE /chat/messages/{message_id}`
 - `POST /telegram/webhook`
 
-`GET /auth/login` uses Telegram OIDC Authorization Code Flow with PKCE when the
-service has bot credentials. The service derives OIDC `client_id` and
-`client_secret` from the bot token's `bot_id:secret` parts unless explicit
-overrides are set. `GET /auth/login?flow=page` keeps the hosted Login library
-fallback available for troubleshooting.
+`GET /auth/login` uses the hosted Telegram Login page for browser sessions.
+The service derives the login Client ID from the bot token's numeric prefix
+unless an explicit override is set. `GET /auth/login?flow=code` forces
+Authorization Code Flow with PKCE when explicit OIDC client credentials are
+configured.
 
 All `/chat/*` routes require either `X-Session-ID: <session_id>` from
 `POST /auth/sessions` or `Authorization: Bearer <token>` from `/auth/callback`.

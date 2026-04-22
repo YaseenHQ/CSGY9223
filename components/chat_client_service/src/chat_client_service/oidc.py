@@ -89,6 +89,7 @@ def begin_login(
     params = {
         "client_id": config.client_id,
         "redirect_uri": _callback_url(config),
+        "origin": config.service_base_url.rstrip("/"),
         "response_type": "code",
         "scope": "openid profile telegram:bot_access",
         "state": state,

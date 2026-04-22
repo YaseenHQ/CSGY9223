@@ -308,6 +308,7 @@ def test_auth_login_prefers_oidc_code_flow_when_secret_configured(
     location = response.headers["location"]
     assert location.startswith("https://oauth.telegram.org/auth?")
     assert "response_type=code" in location
+    assert "origin=https%3A%2F%2Fexample.com" in location
     assert "code_challenge_method=S256" in location
 
 
@@ -333,6 +334,7 @@ def test_auth_login_code_flow_redirects_to_telegram_oidc(
     location = response.headers["location"]
     assert location.startswith("https://oauth.telegram.org/auth?")
     assert "response_type=code" in location
+    assert "origin=https%3A%2F%2Fexample.com" in location
     assert "code_challenge_method=S256" in location
 
 

@@ -87,11 +87,11 @@ def create_auth_session(
 def auth_login(
     config: Annotated[OidcConfig, Depends(get_oidc_config)],
     session_id: Annotated[str | None, Query(min_length=1)] = None,
-    flow: Annotated[str, Query(pattern="^(page|code)$")] = "page",
+    flow: Annotated[str, Query(pattern="^(auto|page|code)$")] = "auto",
 ) -> HTMLResponse | RedirectResponse:
     """Start Telegram Login with OIDC code flow or the hosted page fallback."""
     _require_known_session(session_id)
-    if flow == "code":
+    if flow == "code" or (flow == "auto" and config.client_secret):
         return _auth_code_redirect(config=config, session_id=session_id)
 
     try:

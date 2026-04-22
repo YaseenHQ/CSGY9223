@@ -290,6 +290,27 @@ def test_auth_login_serves_telegram_login_page(client: TestClient) -> None:
     assert 'request_access: ["write"]' in response.text
 
 
+def test_auth_login_prefers_oidc_code_flow_when_secret_configured(
+    client: TestClient,
+) -> None:
+    """Default login uses Telegram OIDC Authorization Code Flow when available."""
+    config = OidcConfig(
+        client_id="client-id",
+        client_secret="secret",
+        service_base_url="https://example.com",
+        app_session_secret="app-secret",
+    )
+    app.dependency_overrides[get_oidc_config] = lambda: config
+
+    response = client.get("/auth/login", follow_redirects=False)
+
+    assert response.status_code == 302
+    location = response.headers["location"]
+    assert location.startswith("https://oauth.telegram.org/auth?")
+    assert "response_type=code" in location
+    assert "code_challenge_method=S256" in location
+
+
 def test_auth_login_code_flow_redirects_to_telegram_oidc(
     client: TestClient,
 ) -> None:
@@ -562,28 +583,32 @@ def test_begin_login_requires_oidc_config() -> None:
 def test_oidc_config_derives_login_client_id_from_bot_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Telegram Login defaults to the bot token's numeric bot id."""
+    """Telegram Login defaults to the bot token's id and secret parts."""
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:bot-secret")
     monkeypatch.delenv("TELEGRAM_OIDC_CLIENT_ID", raising=False)
+    monkeypatch.delenv("TELEGRAM_OIDC_CLIENT_SECRET", raising=False)
     monkeypatch.delenv("APP_SESSION_SECRET", raising=False)
 
     config = OidcConfig.from_env()
 
     assert config.client_id == "123456"
+    assert config.client_secret == "bot-secret"  # noqa: S105
     assert config.app_session_secret == "123456:bot-secret"  # noqa: S105
 
 
-def test_oidc_config_allows_explicit_login_client_id_override(
+def test_oidc_config_allows_explicit_login_credential_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Explicit Telegram Login client id overrides bot token derivation."""
+    """Explicit Telegram Login credentials override bot token derivation."""
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:bot-secret")
     monkeypatch.setenv("TELEGRAM_OIDC_CLIENT_ID", "client-id")
+    monkeypatch.setenv("TELEGRAM_OIDC_CLIENT_SECRET", "client-secret")
     monkeypatch.delenv("APP_SESSION_SECRET", raising=False)
 
     config = OidcConfig.from_env()
 
     assert config.client_id == "client-id"
+    assert config.client_secret == "client-secret"  # noqa: S105
     assert config.app_session_secret == "123456:bot-secret"  # noqa: S105
 
 

@@ -26,7 +26,8 @@ This branch implements both login paths documented on Telegram's
 Primary session path:
 
 - `POST /auth/sessions` creates a pending service session.
-- `GET /auth/login?session_id=...` serves the hosted Telegram Login page.
+- `GET /auth/login?session_id=...` starts Telegram OIDC Authorization Code
+  Flow with PKCE when bot credentials are configured.
 - `GET /auth/login/config?session_id=...` remains available for custom
   frontends using Telegram's Login library.
 - The config endpoint returns a server-generated `nonce` and Telegram Login
@@ -38,10 +39,12 @@ Primary session path:
 - Adapter-style clients poll `GET /auth/sessions/{session_id}` and use
   `X-Session-ID` on `/chat/*`; direct Bearer tokens remain supported.
 
-OIDC Authorization Code Flow is available only when Telegram exposes OIDC client
-credentials for the bot:
+OIDC Authorization Code Flow uses Telegram's `bot_id:secret` token parts as
+default client credentials, with env overrides available if BotFather Web Login
+shows separate values:
 
 - `GET /auth/login?flow=code` redirects users to Telegram OIDC.
+- `GET /auth/login?flow=page` serves the fallback hosted Telegram Login page.
 - `GET /auth/callback` exchanges the code, validates `id_token`, and checks the
   OIDC nonce.
 - The service authenticates the bound session when `session_id` was supplied and
@@ -58,7 +61,7 @@ Optional deployment settings:
 - `APP_SESSION_SECRET` (optional signing override; defaults to bot token)
 - `APP_SESSION_TTL_SECONDS` (optional)
 - `TELEGRAM_OIDC_CLIENT_ID` (optional override; defaults to bot token numeric id)
-- `TELEGRAM_OIDC_CLIENT_SECRET` (optional; enables `GET /auth/login?flow=code`)
+- `TELEGRAM_OIDC_CLIENT_SECRET` (optional override; defaults to bot token suffix)
 - `TELEGRAM_WEBHOOK_SECRET` (optional webhook hardening)
 - `TELEGRAM_WEBHOOK_ALLOWED_UPDATES` (optional comma-separated update types)
 - `TELEGRAM_WEBHOOK_DROP_PENDING_UPDATES` (optional webhook setup flag)

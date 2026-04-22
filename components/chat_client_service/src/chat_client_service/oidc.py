@@ -41,7 +41,8 @@ class OidcConfig:
         return cls(
             client_id=getenv("TELEGRAM_OIDC_CLIENT_ID")
             or _client_id_from_bot_token(bot_token),
-            client_secret=getenv("TELEGRAM_OIDC_CLIENT_SECRET"),
+            client_secret=getenv("TELEGRAM_OIDC_CLIENT_SECRET")
+            or _client_secret_from_bot_token(bot_token),
             service_base_url=getenv("SERVICE_BASE_URL", "http://localhost:8000"),
             app_session_secret=getenv("APP_SESSION_SECRET") or bot_token,
             app_session_ttl_seconds=int(getenv("APP_SESSION_TTL_SECONDS", "3600")),
@@ -319,3 +320,12 @@ def _client_id_from_bot_token(bot_token: str | None) -> str | None:
     if not separator or not bot_id.isdecimal():
         return None
     return bot_id
+
+
+def _client_secret_from_bot_token(bot_token: str | None) -> str | None:
+    if not bot_token:
+        return None
+    _bot_id, separator, secret = bot_token.partition(":")
+    if not separator or not secret:
+        return None
+    return secret

@@ -7,6 +7,6 @@ with `X-Session-ID`. Direct Bearer tokens from `/auth/callback` are also
 accepted for compatibility.
 
 The service owner configures the Bot API token, service base URL, webhook
-secret, and storage path. The service derives the Telegram Login client id and
-default app-session signing secret from the bot token unless explicit overrides
-are set. API consumers do not configure Telegram credentials.
+secret, and storage path. The service derives Telegram OIDC client credentials
+and default app-session signing secret from the bot token unless explicit
+overrides are set. API consumers do not configure Telegram credentials.

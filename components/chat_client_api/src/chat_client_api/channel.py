@@ -13,6 +13,11 @@ class Channel(ABC):
         raise NotImplementedError
 
     @property
+    def channel_id(self) -> str:
+        """Return the shared-API channel identifier alias."""
+        return self.id
+
+    @property
     @abstractmethod
     def name(self) -> str:
         """Return the display name of the channel."""
@@ -23,3 +28,8 @@ class Channel(ABC):
     def channel_type(self) -> str:
         """Return the type of channel (e.g. 'group', 'private', 'channel')."""
         raise NotImplementedError
+
+    @property
+    def is_private(self) -> bool | None:
+        """Return whether the channel is private when known."""
+        return None

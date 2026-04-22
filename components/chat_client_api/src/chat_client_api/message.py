@@ -13,6 +13,11 @@ class Message(ABC):
         raise NotImplementedError
 
     @property
+    def message_id(self) -> str:
+        """Return the shared-API message identifier alias."""
+        return self.id
+
+    @property
     @abstractmethod
     def sender(self) -> str:
         """Return the sender's identifier."""
@@ -23,6 +28,11 @@ class Message(ABC):
     def channel_id(self) -> str:
         """Return the channel or conversation ID this message belongs to."""
         raise NotImplementedError
+
+    @property
+    def channel(self) -> str:
+        """Return the shared-API channel identifier alias."""
+        return self.channel_id
 
     @property
     @abstractmethod

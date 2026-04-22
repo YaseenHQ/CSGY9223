@@ -1,8 +1,6 @@
-"""Unit tests for Telegram scaffold models."""
+"""Unit tests for Telegram models."""
 
-from chat_client_api.channel import Channel
-from chat_client_api.client import Client
-from chat_client_api.message import Message
+from chat_client_api import Channel, ChatClient, Message
 from telegram_client_impl.channel import TelegramChannel
 from telegram_client_impl.client import TelegramClient
 from telegram_client_impl.config import TelegramClientConfig
@@ -15,8 +13,10 @@ def test_telegram_channel_contract() -> None:
 
     assert isinstance(channel, Channel)
     assert channel.id == "ch-1"
+    assert channel.channel_id == "ch-1"
     assert channel.name == "general"
     assert channel.channel_type == "group"
+    assert channel.is_private is False
 
 
 def test_telegram_message_contract() -> None:
@@ -31,8 +31,10 @@ def test_telegram_message_contract() -> None:
 
     assert isinstance(message, Message)
     assert message.id == "m-1"
+    assert message.message_id == "m-1"
     assert message.sender == "alice"
     assert message.channel_id == "ch-1"
+    assert message.channel == "ch-1"
     assert message.timestamp == "2026-02-16T10:00:00Z"
     assert message.text == "hello"
 
@@ -40,11 +42,9 @@ def test_telegram_message_contract() -> None:
 def test_telegram_client_contract_shape() -> None:
     """TelegramClient is constructible and conforms to Client."""
     config = TelegramClientConfig(
-        api_id=None,
-        api_hash=None,
         bot_token=None,
         interactive=False,
     )
     client = TelegramClient(config=config)
 
-    assert isinstance(client, Client)
+    assert isinstance(client, ChatClient)

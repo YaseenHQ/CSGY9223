@@ -1,10 +1,11 @@
-# Telegram Implementation
+# Telegram Bot API Implementation
 
 ## Package Layout
 
 - `components/telegram_client_impl/pyproject.toml`
 - `components/telegram_client_impl/README.md`
 - `components/telegram_client_impl/src/telegram_client_impl/*.py`
+- `components/chat_client_service/src/chat_client_service/*.py`
 
 ## Injection Behavior
 
@@ -17,18 +18,78 @@ When `telegram_client_impl` is imported, it registers implementation factories i
 This allows consumers to code against the interface while swapping implementation
 by import.
 
-## Authentication Scaffold
+## Authentication
 
-Configuration is read from environment variables:
+This branch implements both login paths documented on Telegram's
+[Log In With Telegram](https://core.telegram.org/bots/telegram-login) page.
 
-- `TELEGRAM_API_ID`
-- `TELEGRAM_API_HASH`
+Primary Telegram Login library path:
+
+- `GET /auth/login/config` returns a server-generated `nonce` and Telegram
+  Login `client_id`.
+- A frontend passes those values to `Telegram.Login.init(...)`.
+- Telegram returns an `id_token` to the frontend callback.
+- `POST /auth/callback` verifies that `id_token` server-side, checks the nonce,
+  and returns this service's Bearer token.
+
+OIDC Authorization Code Flow is also available for OIDC-compatible clients:
+
+- `GET /auth/login` redirects users to Telegram OIDC.
+- `GET /auth/callback` exchanges the code, validates `id_token`, and checks the
+  OIDC nonce.
+- The service issues its own Bearer token for `/chat/*`.
+
+Required service-owned environment variables for the Login library path:
+
 - `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_SESSION_NAME`
+- `TELEGRAM_OIDC_CLIENT_ID`
 
-No credentials are hardcoded.
+Optional deployment settings:
 
-## Current Status
+- `APP_SESSION_SECRET` (local Bearer signing override; defaults to bot token)
+- `TELEGRAM_OIDC_CLIENT_SECRET` (required only for `GET /auth/login`)
+- `SERVICE_BASE_URL` (required for redirect flow and webhook setup)
+- `APP_SESSION_TTL_SECONDS` (optional)
+- `CHAT_CLIENT_STORE_PATH` (optional SQLite path)
+- `TELEGRAM_WEBHOOK_SECRET` (required for deployed webhooks)
+- `TELEGRAM_WEBHOOK_ALLOWED_UPDATES` (optional comma-separated update types)
+- `TELEGRAM_WEBHOOK_DROP_PENDING_UPDATES` (optional webhook setup flag)
 
-This is a first-draft scaffold for HW1. Client methods and mapping logic are
-placeholders and raise `NotImplementedError`.
+API consumers do not need Telegram API ID/hash values, user session strings, or
+their own service deployment.
+
+## Bot-Scoped Chat Behavior
+
+Bot API does not expose arbitrary user chat history or user dialog listing.
+Therefore:
+
+- `POST /chat/messages` sends through the service bot.
+- `GET /chat/messages` returns messages the bot observed or sent.
+- `GET /chat/channels` returns chats known to the bot.
+- `DELETE /chat/messages/{message_id}` works when Telegram allows the bot to
+  delete that message.
+
+The webhook is what makes reads work. Configure it after deploy:
+
+```bash
+uv run python scripts/configure_telegram_webhook.py
+```
+
+For group/channel access, the bot must be present in the chat. The webhook
+records observed messages and grants access to their senders; when no grant is
+cached, the service asks Bot API `getChatMember` to verify that the logged-in
+Telegram user belongs to that chat. Telegram only guarantees `getChatMember` for
+other users when the bot is an administrator in the chat. Replace `OSSHWBOTTEST`
+with any group or channel used for testing. `channel_id=me` targets the
+logged-in user's direct chat with the bot.
+
+Telegram stores undelivered updates for at most 24 hours, and `getUpdates` and
+webhooks are mutually exclusive. The webhook setup script registers explicit
+`allowed_updates` so Telegram sends the update types this service records:
+`message`, `edited_message`, `channel_post`, `edited_channel_post`, and
+`my_chat_member`.
+
+`DELETE /chat/messages/{message_id}` calls Bot API `deleteMessage`; Telegram can
+still reject deletion for age, service-message, channel, or administrator-rights
+constraints. Message responses return opaque ids in `channel_id:message_id`
+form, so callers can pass the returned id directly to the delete route.

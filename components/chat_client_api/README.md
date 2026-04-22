@@ -26,7 +26,7 @@ from chat_client_api import Client, get_client
 from chat_client_api.message import Message
 
 client: Client = get_client()
-for msg in client.get_messages(channel_id="general", max_results=5):
+for msg in client.get_messages(channel_id="general", limit=5):
     print(msg.text)
 ```
 
@@ -48,9 +48,11 @@ client = get_client(interactive=False)
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `send_message` | `(channel_id: str, text: str) -> Message` | Send a message to a channel |
-| `get_messages` | `(channel_id: str, max_results: int = 10) -> Iterator[Message]` | Fetch messages from a channel |
-| `delete_message` | `(channel_id: str, message_id: str) -> bool` | Delete a message |
-| `get_channels` | `() -> Iterator[Channel]` | List available channels |
+| `get_channels` | `() -> list[Channel]` | List available channels |
+| `get_channel` | `(channel_id: str) -> Channel` | Fetch one channel |
+| `get_messages` | `(channel_id: str, limit: int = 10, cursor: str \| None = None) -> list[Message]` | Fetch messages from a channel |
+| `get_message` | `(message_id: str) -> Message` | Fetch one message by opaque id |
+| `delete_message` | `(message_id: str) -> None` | Delete a message |
 
 ### Factory Function
 
@@ -62,5 +64,5 @@ Raises `NotImplementedError` until an implementation package injects itself.
 
 1. Implement every abstract method in `Client`.
 2. Implement every abstract property in `Message` and `Channel`.
-3. Publish a factory (`get_client_impl`) and assign it to `chat_client_api.get_client`.
-4. Honour the `interactive` flag for authentication flows.
+3. Publish a factory (`get_client_impl`) and register it with `chat_client_api.register_client`.
+4. Accept shared-API style opaque message ids such as `channel_id:message_id`.

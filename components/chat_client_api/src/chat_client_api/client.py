@@ -1,7 +1,7 @@
-"""Core chat client contract definitions and factory placeholder."""
+"""Core chat client contract definitions and injectable factory hook."""
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Callable
 
 from chat_client_api.channel import Channel
 from chat_client_api.message import Message
@@ -25,29 +25,74 @@ class Client(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_messages(self, channel_id: str, max_results: int = 10) -> Iterator[Message]:
-        """Return an iterator of messages from a channel.
-
-        Args:
-            channel_id: The channel or conversation to fetch messages from.
-            max_results: Maximum number of messages to return.
+    def get_channels(self) -> list[Channel]:
+        """Return available channels or conversations.
 
         Returns:
-            An iterator of Message objects. Results are not paginated;
-            at most max_results messages are returned. Errors during
-            iteration may raise implementation-specific exceptions.
-
+            Channel objects.
 
         """
         raise NotImplementedError
 
     @abstractmethod
-    def delete_message(self, channel_id: str, message_id: str) -> bool:
+    def get_channel(self, channel_id: str) -> Channel:
+        """Return one channel by ID.
+
+        Args:
+            channel_id: Channel or conversation ID.
+
+        Returns:
+            Channel object.
+
+        Raises:
+            ValueError: If the channel is not known.
+
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_messages(
+        self,
+        channel_id: str,
+        limit: int = 10,
+        cursor: str | None = None,
+    ) -> list[Message]:
+        """Return messages from a channel.
+
+        Args:
+            channel_id: The channel or conversation to fetch messages from.
+            limit: Maximum number of messages to return.
+            cursor: Optional pagination cursor. Implementations may ignore it.
+
+        Returns:
+            Message objects. Results are not paginated; at most the requested
+            number of messages are returned.
+
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get_message(self, message_id: str) -> Message:
+        """Return one message by its opaque ID.
+
+        Args:
+            message_id: Message ID, or ``channel_id:message_id``.
+
+        Returns:
+            Message object.
+
+        Raises:
+            ValueError: If the message is not known.
+
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def delete_message(self, message_id: str) -> None:
         """Delete a message by its ID.
 
         Args:
-            channel_id: The channel containing the message.
-            message_id: The unique identifier of the message to delete.
+            message_id: Opaque ``channel_id:message_id`` identifier.
 
         Raises:
             MessageNotFoundError: If the message does not exist.
@@ -56,15 +101,24 @@ class Client(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
-    def get_channels(self) -> Iterator[Channel]:
-        """Return an iterator of available channels or conversations.
 
-        Returns:
-            An iterator of Channel objects.
+ChatClient = Client
 
-        """
-        raise NotImplementedError
+
+class _ClientRegistry:
+    """Registry for shared-API style client factory injection."""
+
+    _factory: Callable[[], Client] | None = None
+
+    @classmethod
+    def set(cls, factory: Callable[[], Client]) -> None:
+        """Register a client factory."""
+        cls._factory = factory
+
+    @classmethod
+    def get(cls) -> Callable[[], Client] | None:
+        """Return the registered client factory, if any."""
+        return cls._factory
 
 
 def get_client(*, interactive: bool = False) -> Client:
@@ -80,4 +134,13 @@ def get_client(*, interactive: bool = False) -> Client:
         NotImplementedError: If no implementation has been injected.
 
     """
+    del interactive
+    factory = _ClientRegistry.get()
+    if factory is not None:
+        return factory()
     raise NotImplementedError
+
+
+def register_client(factory: Callable[[], Client]) -> None:
+    """Register a concrete chat client factory."""
+    _ClientRegistry.set(factory)

@@ -9,8 +9,8 @@
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yuktakul04/CS-GY-9223-Open-Source.git
-   cd CS-GY-9223-Open-Source
+   git clone https://github.com/YaseenHQ/CSGY9223.git
+   cd CSGY9223
    ```
 
 2. Install dependencies using uv:
@@ -37,6 +37,75 @@ from chat_client_api import get_client
 
 client = get_client(interactive=False)
 ```
+
+## Running the Service
+
+Users of the hosted API do not set environment variables. They start at
+`/auth/login` and use the returned Bearer token on `/chat/*`.
+
+Only the service deployer sets Telegram credentials. The default Login library
+path requires the bot token and BotFather Web Login Client ID.
+
+```bash
+export TELEGRAM_BOT_TOKEN=...
+export TELEGRAM_OIDC_CLIENT_ID=...
+uv run uvicorn chat_client_service.app:app --host 127.0.0.1 --port 8000
+```
+
+Optional deployment settings:
+
+- `APP_SESSION_SECRET`: override for local Bearer token signing. Defaults to
+  `TELEGRAM_BOT_TOKEN`.
+- `TELEGRAM_OIDC_CLIENT_SECRET`: required for `GET /auth/login` redirect flow.
+- `SERVICE_BASE_URL`: required for redirect flow and webhook setup.
+- `APP_SESSION_TTL_SECONDS`: local Bearer token lifetime, default `3600`.
+- `CHAT_CLIENT_STORE_PATH`: SQLite path, default `.data/chat_client.sqlite3`.
+- `TELEGRAM_WEBHOOK_SECRET`: required webhook secret for deployed services.
+- `TELEGRAM_WEBHOOK_ALLOWED_UPDATES`: comma-separated update types for webhook
+  setup; defaults to message, channel-post, and bot-membership updates this
+  service records.
+- `TELEGRAM_WEBHOOK_DROP_PENDING_UPDATES`: set `true` to discard pending updates
+  when configuring the webhook.
+- `TELEGRAM_BOT_API_BASE_URL`: custom Bot API server, default official API.
+
+## Telegram Setup
+
+1. Create a bot in [@BotFather](https://t.me/BotFather).
+2. In BotFather, open Bot Settings > Web Login.
+3. Add the origins where the Login library is embedded, for example
+   `https://example.com`.
+4. Add redirect URIs such as `${SERVICE_BASE_URL}/auth/callback` if you also use
+   the OIDC Authorization Code Flow.
+5. Save the Client ID into `TELEGRAM_OIDC_CLIENT_ID`. Save the Client Secret
+   only if you use `GET /auth/login`.
+6. Configure the webhook after deploy:
+
+```bash
+uv run python scripts/configure_telegram_webhook.py
+```
+
+Telegram's current Login library and OIDC setup is documented in
+[Log In With Telegram](https://core.telegram.org/bots/telegram-login).
+
+For a custom frontend using Telegram's Login library:
+
+1. Call `GET /auth/login/config`.
+2. Use the returned `client_id` and `nonce` in `Telegram.Login.init(...)`.
+3. Send the returned `id_token` and original `nonce` to `POST /auth/callback`.
+4. Use the service Bearer token response on `/chat/*`.
+
+For group tests, add the bot to the chat and configure the webhook so new
+messages reach `/telegram/webhook`. If the service has no cached grant for the
+user yet, it checks Bot API `getChatMember` before allowing `/chat/*`; Telegram
+only guarantees this for other users when the bot is an administrator in that
+chat. Replace `OSSHWBOTTEST` with any group or channel where your bot is
+present. Use `channel_id=me` for the logged-in user's direct chat with the bot.
+Message responses return opaque ids in `channel_id:message_id` form; pass that
+id to `DELETE /chat/messages/{message_id}`. The webhook rejects requests unless
+`TELEGRAM_WEBHOOK_SECRET` is configured and sent by Telegram.
+
+Telegram stores undelivered bot updates for at most 24 hours, and `getUpdates`
+cannot be used while the webhook is configured.
 
 ## Building Documentation
 

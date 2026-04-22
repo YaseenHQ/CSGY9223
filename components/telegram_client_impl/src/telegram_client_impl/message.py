@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from chat_client_api.message import Message
+from chat_client_api import Message
 from telegram_client_impl.errors import TelegramMappingError
 
 
@@ -34,6 +34,11 @@ class TelegramMessage(Message):
         return self._id
 
     @property
+    def message_id(self) -> str:
+        """Return the shared API message identifier."""
+        return self._id
+
+    @property
     def sender(self) -> str:
         """Return the sender identifier."""
         return self._sender
@@ -41,6 +46,11 @@ class TelegramMessage(Message):
     @property
     def channel_id(self) -> str:
         """Return the channel identifier."""
+        return self._channel_id
+
+    @property
+    def channel(self) -> str:
+        """Return the shared API channel identifier."""
         return self._channel_id
 
     @property

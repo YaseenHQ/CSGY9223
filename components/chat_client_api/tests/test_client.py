@@ -1,10 +1,13 @@
 """Tests for the chat client API abstract base classes."""
 
+import importlib
 from unittest.mock import Mock
 
 import pytest
 
-from chat_client_api import Client, get_client
+import chat_client_api
+import chat_client_api.client as client_module
+from chat_client_api import Client
 from chat_client_api.channel import Channel
 from chat_client_api.message import Message
 
@@ -44,25 +47,23 @@ def test_client_get_messages() -> None:
     mock_client = Mock(spec=Client)
     mock_client.get_messages.return_value = iter([mock_msg_1, mock_msg_2])
 
-    messages = list(mock_client.get_messages(channel_id="ch_1", max_results=5))
+    messages = list(mock_client.get_messages(channel_id="ch_1", limit=5))
 
-    mock_client.get_messages.assert_called_once_with(channel_id="ch_1", max_results=5)
+    mock_client.get_messages.assert_called_once_with(channel_id="ch_1", limit=5)
     assert len(messages) == EXPECTED_MESSAGE_COUNT
     assert messages[0].id == "msg_1"
     assert messages[1].id == "msg_2"
 
 
 def test_client_delete_message() -> None:
-    """Verify delete_message calls through and returns a boolean."""
+    """Verify delete_message calls through with an opaque message ID."""
     mock_client = Mock(spec=Client)
-    mock_client.delete_message.return_value = True
+    mock_client.delete_message.return_value = None
 
-    success = mock_client.delete_message(channel_id="ch_1", message_id="msg_to_delete")
+    result = mock_client.delete_message(message_id="ch_1:msg_to_delete")
 
-    mock_client.delete_message.assert_called_once_with(
-        channel_id="ch_1", message_id="msg_to_delete"
-    )
-    assert success is True
+    mock_client.delete_message.assert_called_once_with(message_id="ch_1:msg_to_delete")
+    assert result is None
 
 
 def test_client_get_channels() -> None:
@@ -85,11 +86,17 @@ def test_client_get_channels() -> None:
 
 def test_get_client_raises_not_implemented() -> None:
     """Verify get_client raises NotImplementedError without an implementation."""
+    importlib.reload(client_module)
+    importlib.reload(chat_client_api)
+
     with pytest.raises(NotImplementedError):
-        get_client()
+        chat_client_api.get_client()
 
 
 def test_get_client_interactive_raises_not_implemented() -> None:
     """Verify get_client with interactive=True also raises NotImplementedError."""
+    importlib.reload(client_module)
+    importlib.reload(chat_client_api)
+
     with pytest.raises(NotImplementedError):
-        get_client(interactive=True)
+        chat_client_api.get_client(interactive=True)

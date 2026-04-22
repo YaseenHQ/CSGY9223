@@ -1,130 +1,189 @@
-"""Telegram Client implementation for the chat_client_api.Client contract."""
+"""Telegram Bot API implementation for the chat_client_api.Client contract."""
 
-from collections.abc import Iterator
+from typing import Any
 
-from telethon.sync import TelegramClient as _TeleClient
+import httpx
 
-from chat_client_api.channel import Channel
-from chat_client_api.client import Client
-from chat_client_api.message import Message
+from chat_client_api import Channel, ChatClient, Message
 from telegram_client_impl.config import TelegramClientConfig
 from telegram_client_impl.errors import TelegramAuthError, TelegramClientError
-from telegram_client_impl.mappers import to_channel, to_message
+from telegram_client_impl.store import get_store, record_bot_api_message
+
+MAX_TEXT_LENGTH = 4096
 
 
-class TelegramClient(Client):
-    """Telegram client backed by Telethon."""
+class TelegramClient(ChatClient):
+    """Telegram client backed by the official Bot API."""
 
-    def __init__(self, *, config: TelegramClientConfig) -> None:
-        """Initialize a Telegram client with static configuration."""
+    def __init__(
+        self,
+        *,
+        config: TelegramClientConfig,
+        http_client: httpx.Client | None = None,
+    ) -> None:
+        """Initialize a Telegram Bot API client with static configuration."""
         self._config = config
-        self._client: _TeleClient | None = None
+        self._http_client = http_client
+        self._owns_http_client = http_client is None
         self._connected = False
 
-    def _get_client(self) -> _TeleClient:
-        """Return the underlying Telethon client (must be connected)."""
-        assert self._client is not None
-        return self._client
-
     def send_message(self, channel_id: str, text: str) -> Message:
-        """Send a message to a Telegram channel/chat."""
+        """Send a message to a Telegram chat through the bot."""
         _require_non_empty(value=channel_id, name="channel_id")
         _require_non_empty(value=text, name="text")
+        _require_max_length(value=text, name="text", max_length=MAX_TEXT_LENGTH)
         self._ensure_connected()
 
-        try:
-            raw = self._get_client().send_message(int(channel_id), text)
-        except Exception as exc:  # pragma: no cover - Telethon-specific error types
-            msg = f"Failed to send message: {exc}"
-            raise TelegramClientError(msg) from exc
-
-        return to_message(raw)
+        result = self._request(
+            "sendMessage",
+            json={"chat_id": channel_id, "text": text},
+        )
+        raw_message = _as_dict(result.get("result"))
+        stored = record_bot_api_message(raw_message)
+        return get_store().list_messages(
+            channel_id=stored.channel_id,
+            max_results=1,
+        )[0]
 
     def get_messages(
         self,
         channel_id: str,
-        max_results: int = 10,
-    ) -> Iterator[Message]:
-        """Retrieve messages from a Telegram channel/chat."""
+        limit: int = 10,
+        cursor: str | None = None,
+        *,
+        max_results: int | None = None,
+    ) -> list[Message]:
+        """Retrieve bot-observed messages from a Telegram chat."""
+        del cursor
         _require_non_empty(value=channel_id, name="channel_id")
-        if max_results <= 0:
-            msg = "max_results must be > 0"
+        requested_limit = max_results if max_results is not None else limit
+        if requested_limit <= 0:
+            msg = "limit must be > 0"
             raise ValueError(msg)
 
         self._ensure_connected()
-
-        try:
-            iterator = self._get_client().iter_messages(
-                int(channel_id), limit=max_results
+        return list(
+            get_store().list_messages(
+                channel_id=channel_id,
+                max_results=requested_limit,
             )
-        except Exception as exc:  # pragma: no cover - Telethon-specific error types
-            msg = f"Failed to get messages: {exc}"
-            raise TelegramClientError(msg) from exc
+        )
 
-        for raw in iterator:
-            yield to_message(raw)
-
-    def delete_message(self, channel_id: str, message_id: str) -> bool:
-        """Delete a message in a Telegram channel/chat."""
-        _require_non_empty(value=channel_id, name="channel_id")
+    def get_message(self, message_id: str) -> Message:
+        """Return a bot-observed message by simple or opaque message ID."""
         _require_non_empty(value=message_id, name="message_id")
+        self._ensure_connected()
 
+        message = get_store().get_message(message_id=message_id)
+        if message is None:
+            msg = f"Message not found: {message_id}"
+            raise ValueError(msg)
+        return message
+
+    def delete_message(self, message_id: str, channel_id: str | None = None) -> None:
+        """Delete a message if the bot has Telegram permission."""
+        channel_id, provider_message_id = _resolve_message_reference(
+            message_id=message_id,
+            channel_id=channel_id,
+        )
+        self._ensure_connected()
+
+        result = self._request(
+            "deleteMessage",
+            json={"chat_id": channel_id, "message_id": int(provider_message_id)},
+        )
+        if result.get("result") is not True:
+            msg = "Telegram Bot API did not confirm message deletion"
+            raise TelegramClientError(msg, method="deleteMessage")
+        get_store().remove_message(
+            channel_id=channel_id,
+            message_id=provider_message_id,
+        )
+
+    def get_channels(self) -> list[Channel]:
+        """List Telegram chats known to this bot instance."""
+        self._ensure_connected()
+        return list(get_store().list_channels())
+
+    def get_channel(self, channel_id: str) -> Channel:
+        """Return one Telegram chat known to this bot instance."""
+        _require_non_empty(value=channel_id, name="channel_id")
+        self._ensure_connected()
+
+        channel = get_store().get_channel(channel_id=channel_id)
+        if channel is None:
+            msg = f"Channel not found: {channel_id}"
+            raise ValueError(msg)
+        return channel
+
+    def user_can_access_channel(self, *, user_id: str, channel_id: str) -> bool:
+        """Return whether Telegram reports the user as a chat member."""
+        _require_non_empty(value=user_id, name="user_id")
+        _require_non_empty(value=channel_id, name="channel_id")
         self._ensure_connected()
 
         try:
-            self._get_client().delete_messages(int(channel_id), int(message_id))
-        except Exception as exc:  # pragma: no cover - Telethon-specific error types
-            msg = f"Failed to delete message: {exc}"
-            raise TelegramClientError(msg) from exc
-
-        return True
-
-    def get_channels(self) -> Iterator[Channel]:
-        """List available Telegram channels/chats."""
-        self._ensure_connected()
-
-        try:
-            dialogs = self._get_client().get_dialogs()
-        except Exception as exc:  # pragma: no cover - Telethon-specific error types
-            msg = f"Failed to retrieve channels: {exc}"
-            raise TelegramClientError(msg) from exc
-
-        for dialog in dialogs:
-            yield to_channel(dialog)
+            numeric_user_id = int(user_id)
+        except ValueError:
+            return False
+        result = self._request(
+            "getChatMember",
+            json={"chat_id": channel_id, "user_id": numeric_user_id},
+        )
+        member = _as_dict(result.get("result"))
+        return member.get("status") not in {"left", "kicked"}
 
     def _ensure_connected(self) -> None:
-        """Ensure the underlying Telethon client is authenticated and connected."""
+        """Ensure required Bot API configuration is present."""
         if self._connected:
             return
-
-        if (
-            self._config.api_id is None
-            or self._config.api_hash is None
-            or self._config.bot_token is None
-        ):
-            msg = (
-                "TELEGRAM_API_ID, TELEGRAM_API_HASH, and "
-                "TELEGRAM_BOT_TOKEN are required"
-            )
+        if self._config.bot_token is None:
+            msg = "TELEGRAM_BOT_TOKEN is required"
             raise TelegramAuthError(msg)
-
-        if self._client is None:
-            self._client = _TeleClient(
-                self._config.session_name,
-                int(self._config.api_id),
-                self._config.api_hash,
-            )
-
-        try:
-            self._get_client().start(bot_token=self._config.bot_token)
-        except Exception as exc:  # pragma: no cover - Telethon-specific error types
-            msg = f"Failed to authenticate Telegram client: {exc}"
-            raise TelegramAuthError(msg) from exc
-
+        if self._http_client is None:
+            self._http_client = httpx.Client(base_url=self._api_base_url)
         self._connected = True
 
+    @property
+    def _api_base_url(self) -> str:
+        token = self._config.bot_token or ""
+        return f"{self._config.bot_api_base_url.rstrip('/')}/bot{token}"
 
-def get_client_impl(*, interactive: bool = False) -> Client:
+    def _request(self, method: str, *, json: dict[str, object]) -> dict[str, Any]:
+        self._ensure_connected()
+        assert self._http_client is not None
+        try:
+            response = self._http_client.post(f"/{method}", json=json)
+            payload = response.json()
+        except httpx.HTTPError as exc:
+            msg = f"Telegram Bot API request failed for {method}: {exc}"
+            raise TelegramClientError(msg, method=method) from exc
+        except ValueError as exc:
+            msg = f"Telegram Bot API returned invalid JSON for {method}: {exc}"
+            raise TelegramClientError(msg, method=method) from exc
+
+        if not isinstance(payload, dict):
+            msg = f"Telegram Bot API returned non-object payload for {method}"
+            raise TelegramClientError(msg, method=method)
+        if payload.get("ok") is not True:
+            description = payload.get("description") or payload
+            msg = f"Telegram Bot API returned error for {method}: {description}"
+            parameters = payload.get("parameters")
+            raise TelegramClientError(
+                msg,
+                method=method,
+                error_code=_as_int(payload.get("error_code")),
+                parameters=parameters if isinstance(parameters, dict) else None,
+            )
+        return payload
+
+    def close(self) -> None:
+        """Close the owned HTTP client."""
+        if self._owns_http_client and self._http_client is not None:
+            self._http_client.close()
+
+
+def get_client_impl(*, interactive: bool = False) -> ChatClient:
     """Return the injected client factory implementation."""
     config = TelegramClientConfig.from_env(interactive=interactive)
     return TelegramClient(config=config)
@@ -135,3 +194,41 @@ def _require_non_empty(*, value: str, name: str) -> None:
     if not value:
         msg = f"{name} must be non-empty"
         raise ValueError(msg)
+
+
+def _require_max_length(*, value: str, name: str, max_length: int) -> None:
+    """Validate Telegram Bot API string length limits."""
+    if len(value) > max_length:
+        msg = f"{name} must be <= {max_length} characters"
+        raise ValueError(msg)
+
+
+def _as_dict(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        msg = "Telegram Bot API response missing message result"
+        raise TelegramClientError(msg)
+    return value
+
+
+def _as_int(value: object) -> int | None:
+    return value if isinstance(value, int) else None
+
+
+def _resolve_message_reference(
+    *,
+    message_id: str,
+    channel_id: str | None,
+) -> tuple[str, str]:
+    _require_non_empty(value=message_id, name="message_id")
+
+    if channel_id is not None:
+        _require_non_empty(value=channel_id, name="channel_id")
+        return channel_id, message_id
+
+    if ":" not in message_id:
+        msg = "message_id must be formatted as channel_id:message_id"
+        raise ValueError(msg)
+    resolved_channel_id, resolved_message_id = message_id.split(":", 1)
+    _require_non_empty(value=resolved_channel_id, name="channel_id")
+    _require_non_empty(value=resolved_message_id, name="message_id")
+    return resolved_channel_id, resolved_message_id

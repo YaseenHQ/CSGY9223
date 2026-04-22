@@ -1,15 +1,21 @@
-"""Inject Telegram factory functions into ``chat_client_api``."""
+"""Register Telegram factory functions with ``chat_client_api``."""
+
+from importlib import import_module
+from types import ModuleType
+from typing import Any, cast
 
 import chat_client_api
-import chat_client_api.client as client_module
-import chat_client_api.message as message_module
 from telegram_client_impl.client import get_client_impl
 from telegram_client_impl.message import get_message_impl
+from telegram_client_impl.store import record_update as record_update
 
-# Rebind module-level factory hooks.
-client_module.get_client = get_client_impl
-message_module.get_message = get_message_impl
+chat_client_api.register_client(lambda: get_client_impl(interactive=False))
+cast("Any", chat_client_api).get_message = get_message_impl
 
-# Keep package exports aligned for `from chat_client_api import get_client` use-cases.
-chat_client_api.get_client = get_client_impl
-chat_client_api.get_message = get_message_impl
+try:
+    message_module: ModuleType | None = import_module("chat_client_api.message")
+except ImportError:
+    message_module = None
+
+if message_module is not None:
+    cast("Any", message_module).get_message = get_message_impl

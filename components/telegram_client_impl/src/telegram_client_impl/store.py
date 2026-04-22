@@ -115,6 +115,11 @@ class BotUpdateStore:
                     name TEXT,
                     created_at INTEGER NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS bot_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
                 """
             )
             try:
@@ -133,6 +138,7 @@ class BotUpdateStore:
                 DELETE FROM chat_access;
                 DELETE FROM oidc_states;
                 DELETE FROM auth_sessions;
+                DELETE FROM bot_state;
                 """
             )
 
@@ -417,6 +423,32 @@ class BotUpdateStore:
         if session is None:
             return None
         return session.token
+
+    def get_int_state(self, *, key: str) -> int | None:
+        """Return an integer bot state value."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM bot_state WHERE key = ?",
+                (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return int(row["value"])
+        except ValueError:
+            return None
+
+    def set_int_state(self, *, key: str, value: int) -> None:
+        """Persist an integer bot state value."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO bot_state (key, value)
+                VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (key, str(value)),
+            )
 
 
 _STORE: BotUpdateStore | None = None

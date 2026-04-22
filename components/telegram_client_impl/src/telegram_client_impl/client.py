@@ -7,9 +7,18 @@ import httpx
 from chat_client_api import Channel, ChatClient, Message
 from telegram_client_impl.config import TelegramClientConfig
 from telegram_client_impl.errors import TelegramAuthError, TelegramClientError
-from telegram_client_impl.store import get_store, record_bot_api_message
+from telegram_client_impl.store import get_store, record_bot_api_message, record_update
 
 MAX_TEXT_LENGTH = 4096
+TELEGRAM_CONFLICT_ERROR_CODE = 409
+POLLING_OFFSET_STATE_KEY = "telegram_get_updates_offset"
+POLLING_ALLOWED_UPDATES = [
+    "message",
+    "edited_message",
+    "channel_post",
+    "edited_channel_post",
+    "my_chat_member",
+]
 
 
 class TelegramClient(ChatClient):
@@ -26,6 +35,7 @@ class TelegramClient(ChatClient):
         self._http_client = http_client
         self._owns_http_client = http_client is None
         self._connected = False
+        self._polling_checked = False
 
     def send_message(self, channel_id: str, text: str) -> Message:
         """Send a message to a Telegram chat through the bot."""
@@ -62,18 +72,19 @@ class TelegramClient(ChatClient):
             raise ValueError(msg)
 
         self._ensure_connected()
-        return list(
-            get_store().list_messages(
-                channel_id=channel_id,
-                max_results=requested_limit,
-            )
+        self._sync_updates_from_polling()
+        messages = get_store().list_messages(
+            channel_id=channel_id,
+            max_results=requested_limit,
         )
+        return list(messages)
 
     def get_message(self, message_id: str) -> Message:
         """Return a bot-observed message by simple or opaque message ID."""
         _require_non_empty(value=message_id, name="message_id")
         self._ensure_connected()
 
+        self._sync_updates_from_polling()
         message = get_store().get_message(message_id=message_id)
         if message is None:
             msg = f"Message not found: {message_id}"
@@ -103,13 +114,16 @@ class TelegramClient(ChatClient):
     def get_channels(self) -> list[Channel]:
         """List Telegram chats known to this bot instance."""
         self._ensure_connected()
-        return list(get_store().list_channels())
+        self._sync_updates_from_polling()
+        channels = get_store().list_channels()
+        return list(channels)
 
     def get_channel(self, channel_id: str) -> Channel:
         """Return one Telegram chat known to this bot instance."""
         _require_non_empty(value=channel_id, name="channel_id")
         self._ensure_connected()
 
+        self._sync_updates_from_polling()
         channel = get_store().get_channel(channel_id=channel_id)
         if channel is None:
             msg = f"Channel not found: {channel_id}"
@@ -176,6 +190,71 @@ class TelegramClient(ChatClient):
                 parameters=parameters if isinstance(parameters, dict) else None,
             )
         return payload
+
+    def _sync_updates_from_polling(self) -> None:
+        """Pull pending updates when this bot is not configured for webhooks."""
+        if self._polling_checked:
+            return
+        self._polling_checked = True
+
+        try:
+            webhook_configured = self._webhook_is_configured()
+        except TelegramClientError:
+            return
+        if webhook_configured:
+            return
+
+        try:
+            updates_payload = self._request(
+                "getUpdates",
+                json=self._polling_request_payload(),
+            )
+        except TelegramClientError as exc:
+            if exc.error_code == TELEGRAM_CONFLICT_ERROR_CODE:
+                return
+            return
+
+        self._record_polled_updates(updates_payload.get("result"))
+
+    def _webhook_is_configured(self) -> bool:
+        """Return whether Telegram reports an active webhook URL."""
+        webhook_info = self._request("getWebhookInfo", json={})
+        result = _as_dict(webhook_info.get("result"))
+        return bool(result.get("url"))
+
+    def _polling_request_payload(self) -> dict[str, object]:
+        """Build the getUpdates request from the persisted offset."""
+        offset = get_store().get_int_state(key=POLLING_OFFSET_STATE_KEY)
+        payload: dict[str, object] = {
+            "limit": 100,
+            "timeout": 0,
+            "allowed_updates": POLLING_ALLOWED_UPDATES,
+        }
+        if offset is not None:
+            payload["offset"] = offset
+        return payload
+
+    def _record_polled_updates(self, updates: object) -> None:
+        """Record polled updates and advance the persisted offset."""
+        if not isinstance(updates, list):
+            msg = "Telegram Bot API returned non-list updates result"
+            raise TelegramClientError(msg, method="getUpdates")
+
+        store = get_store()
+        update_ids: list[int] = []
+        for update in updates:
+            if not isinstance(update, dict):
+                continue
+            record_update(update)
+            update_id = update.get("update_id")
+            if isinstance(update_id, int):
+                update_ids.append(update_id)
+
+        if update_ids:
+            store.set_int_state(
+                key=POLLING_OFFSET_STATE_KEY,
+                value=max(update_ids) + 1,
+            )
 
     def close(self) -> None:
         """Close the owned HTTP client."""

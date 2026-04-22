@@ -42,6 +42,10 @@ import telegram_client_impl
 telegram_client_impl.record_update(update_payload)
 ```
 
+If no webhook is configured for the bot, reads make one short `getUpdates` poll
+before returning local state. Telegram disables `getUpdates` while a webhook is
+active, so deployed services should still use webhooks for reliable delivery.
+
 ## Environment Variables
 
 The implementation reads:

@@ -115,7 +115,8 @@ OIDC-compatible clients can force the standards-based path with
 `GET /auth/login?flow=code`, which performs Authorization Code Flow with PKCE.
 
 Chat endpoints are bot-scoped: sends/deletes use the official Bot API, and reads
-return messages the bot observed through webhooks or sent through the service.
+return messages the bot observed through webhooks, pulled with `getUpdates` when
+no webhook is configured, or sent through the service.
 Message responses return opaque ids in `channel_id:message_id` form; pass that
 id to `DELETE /chat/messages/{message_id}`.
 If a user has no cached chat grant yet, the service verifies membership with
@@ -137,8 +138,9 @@ so Telegram delivers new messages to `/telegram/webhook`. Replace
 present. `me` means the logged-in user's direct chat with the bot.
 If `TELEGRAM_WEBHOOK_SECRET` is set, the webhook rejects requests unless
 Telegram sends the matching secret header.
-Telegram keeps undelivered updates for at most 24 hours, and `getUpdates` cannot
-be used while a webhook is configured.
+If no webhook is configured, read endpoints attempt a short `getUpdates` poll
+before reading the local store. Telegram keeps undelivered updates for at most
+24 hours, and `getUpdates` cannot be used while a webhook is configured.
 
 ## Documentation
 

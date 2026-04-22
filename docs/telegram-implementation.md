@@ -74,7 +74,8 @@ Bot API does not expose arbitrary user chat history or user dialog listing.
 Therefore:
 
 - `POST /chat/messages` sends through the service bot.
-- `GET /chat/messages` returns messages the bot observed or sent.
+- `GET /chat/messages` returns messages the bot observed, pulled while no
+  webhook is configured, or sent.
 - `GET /chat/messages/{message_id}` returns one observed or sent message by
   opaque id.
 - `GET /chat/channels` returns chats known to the bot.
@@ -82,7 +83,8 @@ Therefore:
 - `DELETE /chat/messages/{message_id}` works when Telegram allows the bot to
   delete that message.
 
-The webhook is what makes reads work. Configure it after deploy:
+The webhook is the production path that makes reads work. Configure it after
+deploy:
 
 ```bash
 uv run python scripts/configure_telegram_webhook.py
@@ -97,9 +99,12 @@ with any group or channel used for testing. `channel_id=me` targets the
 logged-in user's direct chat with the bot.
 
 Telegram stores undelivered updates for at most 24 hours, and `getUpdates` and
-webhooks are mutually exclusive. The webhook setup script registers explicit
-`allowed_updates` so Telegram sends the update types this service records:
-`message`, `edited_message`, `channel_post`, `edited_channel_post`, and
+webhooks are mutually exclusive. When no webhook is configured, read endpoints
+attempt a short `getUpdates` poll before reading the local store. Once a webhook
+is active, Telegram will not allow polling, so delivery depends on the webhook
+URL and optional secret being correct. The webhook setup script registers
+explicit `allowed_updates` so Telegram sends the update types this service
+records: `message`, `edited_message`, `channel_post`, `edited_channel_post`, and
 `my_chat_member`.
 
 `DELETE /chat/messages/{message_id}` calls Bot API `deleteMessage`; Telegram can

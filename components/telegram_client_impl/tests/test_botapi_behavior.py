@@ -63,6 +63,12 @@ def test_client_methods_use_bot_api_and_store_observed_state() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
+        if request.url.path.endswith("/getWebhookInfo"):
+            return httpx.Response(
+                200,
+                json={"ok": True, "result": {"url": "https://example.com/hook"}},
+                request=request,
+            )
         if request.url.path.endswith("/sendMessage"):
             return httpx.Response(
                 200,
@@ -103,10 +109,9 @@ def test_client_methods_use_bot_api_and_store_observed_state() -> None:
     client.delete_message(message_id="123:5")
     assert list(client.get_messages("123")) == []
 
-    assert [request.url.path.rsplit("/", 1)[-1] for request in requests] == [
-        "sendMessage",
-        "deleteMessage",
-    ]
+    methods = [request.url.path.rsplit("/", 1)[-1] for request in requests]
+    assert "sendMessage" in methods
+    assert "deleteMessage" in methods
 
 
 def test_client_requires_bot_token() -> None:
@@ -177,13 +182,69 @@ def test_webhook_update_records_message_for_reads() -> None:
     record_update({"update_id": 1, "message": _raw_message(message_id=8, text="seen")})
 
     config = TelegramClientConfig(bot_token="token")
-    client = TelegramClient(config=config, http_client=httpx.Client())
+    client = TelegramClient(
+        config=config,
+        http_client=httpx.Client(
+            base_url="https://api.telegram.org/bottoken",
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    json={
+                        "ok": True,
+                        "result": {"url": "https://example.com/hook"},
+                    },
+                    request=request,
+                )
+            ),
+        ),
+    )
     messages = list(client.get_messages("123", limit=1))
     channels = list(client.get_channels())
 
     assert messages[0].id == "8"
     assert messages[0].text == "seen"
     assert channels[0].id == "123"
+
+
+def test_client_polls_updates_when_webhook_is_not_configured() -> None:
+    """Reads can ingest pending Bot API updates when no webhook is active."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/getWebhookInfo"):
+            return httpx.Response(
+                200,
+                json={"ok": True, "result": {"url": ""}},
+                request=request,
+            )
+        if request.url.path.endswith("/getUpdates"):
+            return httpx.Response(
+                200,
+                json={
+                    "ok": True,
+                    "result": [
+                        {
+                            "update_id": 11,
+                            "message": _raw_message(message_id=9, text="polled"),
+                        }
+                    ],
+                },
+                request=request,
+            )
+        return httpx.Response(404, json={"ok": False}, request=request)
+
+    client = _client(httpx.MockTransport(handler))
+
+    messages = client.get_messages("123", limit=10)
+
+    assert messages[0].id == "9"
+    assert messages[0].text == "polled"
+    assert get_store().get_int_state(key="telegram_get_updates_offset") == 12
+    assert [request.url.path.rsplit("/", 1)[-1] for request in requests] == [
+        "getWebhookInfo",
+        "getUpdates",
+    ]
 
 
 def test_webhook_records_edited_channel_post_sender_chat() -> None:

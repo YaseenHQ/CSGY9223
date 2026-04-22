@@ -374,7 +374,7 @@ def _require_known_session(session_id: str | None) -> None:
 def _session_login_url(*, config: OidcConfig, session_id: str) -> str:
     return (
         f"{config.service_base_url.rstrip('/')}/auth/login?"
-        f"{urlencode({'session_id': session_id})}"
+        f"{urlencode({'session_id': session_id, 'flow': 'page'})}"
     )
 
 
@@ -432,6 +432,7 @@ def _login_page_html(
     client_id_json = json.dumps(client_id)
     nonce_json = json.dumps(nonce)
     origin_json = json.dumps(origin)
+    session_id_json = json.dumps(session_id)
     session_hint_json = json.dumps(session_hint)
     return f"""<!doctype html>
 <html lang="en">
@@ -455,31 +456,62 @@ def _login_page_html(
     const clientId = Number({client_id_json});
     const nonce = {nonce_json};
     const origin = {origin_json};
+    const sessionId = {session_id_json};
     const sessionHint = {session_hint_json};
     const statusBox = document.getElementById("status");
+    sessionStorage.setItem("telegram_auth_state", nonce);
+    localStorage.setItem("telegram_auth_state", nonce);
+    if (sessionId !== null) {{
+      sessionStorage.setItem("telegram_auth_session_id", sessionId);
+      localStorage.setItem("telegram_auth_session_id", sessionId);
+    }}
     function show(message) {{
       statusBox.textContent = message;
+    }}
+    function authResultFrom(data) {{
+      const bytes = new TextEncoder().encode(JSON.stringify(data));
+      let raw = "";
+      bytes.forEach((byte) => {{
+        raw += String.fromCharCode(byte);
+      }});
+      return btoa(raw).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+    }}
+    async function postJson(url, data) {{
+      const response = await fetch(url, {{
+        method: "POST",
+        headers: {{"content-type": "application/json"}},
+        body: JSON.stringify(data),
+      }});
+      const body = await response.json();
+      if (!response.ok) {{
+        show(body.detail || "Login failed.");
+        return false;
+      }}
+      sessionStorage.removeItem("telegram_auth_state");
+      sessionStorage.removeItem("telegram_auth_session_id");
+      localStorage.removeItem("telegram_auth_state");
+      localStorage.removeItem("telegram_auth_session_id");
+      show("Login complete. " + sessionHint);
+      return true;
     }}
     async function finishLogin(data) {{
       if (!data || data.error) {{
         show(data && data.error ? data.error : "Telegram login was cancelled.");
         return;
       }}
-      if (!data.id_token) {{
-        show("Telegram did not return an id_token.");
+      if (data.id_token) {{
+        await postJson("/auth/callback", {{id_token: data.id_token, nonce}});
         return;
       }}
-      const response = await fetch("/auth/callback", {{
-        method: "POST",
-        headers: {{"content-type": "application/json"}},
-        body: JSON.stringify({{id_token: data.id_token, nonce}}),
-      }});
-      const body = await response.json();
-      if (!response.ok) {{
-        show(body.detail || "Login failed.");
+      if (data.hash) {{
+        await postJson("/auth/telegram-login", {{
+          auth_result: authResultFrom(data),
+          state: nonce,
+          session_id: sessionId,
+        }});
         return;
       }}
-      show("Login complete. " + sessionHint);
+      show("Telegram did not return an id_token or signed login payload.");
     }}
     Telegram.Login.init({{
       client_id: clientId,

@@ -314,6 +314,9 @@ def test_auth_login_serves_telegram_login_page(client: TestClient) -> None:
     assert "https://oauth.telegram.org/js/telegram-login.js?3" in response.text
     assert "Telegram.Login.init" in response.text
     assert "authUrl.searchParams.set" in response.text
+    assert "sessionStorage.setItem" in response.text
+    assert "localStorage.setItem" in response.text
+    assert "/auth/telegram-login" in response.text
     assert 'const origin = "https://example.com";' in response.text
     assert 'request_access: ["write"]' in response.text
 
@@ -554,7 +557,9 @@ def test_auth_session_flow_authenticates_chat_with_session_header(
 
     assert session_response.status_code == 201
     assert session_payload["authenticated"] is False
-    assert session_payload["login_url"].endswith(f"/auth/login?session_id={session_id}")
+    assert session_payload["login_url"].endswith(
+        f"/auth/login?session_id={session_id}&flow=page"
+    )
     assert callback_response.status_code == 200
     assert "access_token" in callback_response.json()
     assert status_response.json()["authenticated"] is True
@@ -669,7 +674,7 @@ def test_begin_login_requires_oidc_config() -> None:
 def test_oidc_config_derives_login_client_id_from_bot_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Telegram Login defaults to the bot token's id and secret parts."""
+    """Telegram Login can use a bot token id without inventing OIDC secrets."""
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:bot-secret")
     monkeypatch.delenv("TELEGRAM_OIDC_CLIENT_ID", raising=False)
     monkeypatch.delenv("TELEGRAM_OIDC_CLIENT_SECRET", raising=False)
@@ -678,7 +683,7 @@ def test_oidc_config_derives_login_client_id_from_bot_token(
     config = OidcConfig.from_env()
 
     assert config.client_id == "123456"
-    assert config.client_secret == "bot-secret"  # noqa: S105
+    assert config.client_secret is None
     assert config.app_session_secret == "123456:bot-secret"  # noqa: S105
 
 

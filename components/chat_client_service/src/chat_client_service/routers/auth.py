@@ -456,17 +456,38 @@ def _login_page_html(
     const clientId = Number({client_id_json});
     const nonce = {nonce_json};
     const origin = {origin_json};
-    const sessionId = {session_id_json};
+    const launchedSessionId = {session_id_json};
     const sessionHint = {session_hint_json};
     const statusBox = document.getElementById("status");
-    sessionStorage.setItem("telegram_auth_state", nonce);
-    localStorage.setItem("telegram_auth_state", nonce);
-    if (sessionId !== null) {{
-      sessionStorage.setItem("telegram_auth_session_id", sessionId);
-      localStorage.setItem("telegram_auth_session_id", sessionId);
+    const fragment = new URLSearchParams(window.location.hash.slice(1));
+    const authResult = fragment.get("tgAuthResult");
+    const storedState = sessionStorage.getItem("telegram_auth_state") ||
+      localStorage.getItem("telegram_auth_state");
+    const storedSessionId = sessionStorage.getItem("telegram_auth_session_id") ||
+      localStorage.getItem("telegram_auth_session_id");
+    const state = authResult ? storedState : nonce;
+    const sessionId = authResult ? storedSessionId : launchedSessionId;
+    if (!authResult) {{
+      sessionStorage.setItem("telegram_auth_state", nonce);
+      localStorage.setItem("telegram_auth_state", nonce);
+      if (launchedSessionId !== null) {{
+        sessionStorage.setItem("telegram_auth_session_id", launchedSessionId);
+        localStorage.setItem("telegram_auth_session_id", launchedSessionId);
+      }}
     }}
     function show(message) {{
       statusBox.textContent = message;
+    }}
+    function telegramAuthUrl() {{
+      const params = new URLSearchParams({{
+        response_type: "post_message",
+        client_id: String(clientId),
+        redirect_uri: origin + "/",
+        scope: "openid profile telegram:bot_access",
+        nonce,
+        origin,
+      }});
+      return "https://oauth.telegram.org/auth?" + params.toString();
     }}
     function authResultFrom(data) {{
       const bytes = new TextEncoder().encode(JSON.stringify(data));
@@ -496,6 +517,10 @@ def _login_page_html(
     }}
     async function finishLogin(data) {{
       if (!data || data.error) {{
+        if (data && data.error === "missing id_token") {{
+          window.location.assign(telegramAuthUrl());
+          return;
+        }}
         show(data && data.error ? data.error : "Telegram login was cancelled.");
         return;
       }}
@@ -506,19 +531,30 @@ def _login_page_html(
       if (data.hash) {{
         await postJson("/auth/telegram-login", {{
           auth_result: authResultFrom(data),
-          state: nonce,
+          state,
           session_id: sessionId,
         }});
         return;
       }}
       show("Telegram did not return an id_token or signed login payload.");
     }}
-    Telegram.Login.init({{
-      client_id: clientId,
-      request_access: ["write"],
-      nonce,
-    }}, finishLogin);
-    document.getElementById("telegram-login").addEventListener("click", () => {{
+    if (authResult) {{
+      postJson("/auth/telegram-login", {{
+        auth_result: authResult,
+        state,
+        session_id: sessionId,
+      }}).then((completed) => {{
+        if (completed && window.opener) {{
+          window.close();
+        }}
+      }});
+    }} else {{
+      Telegram.Login.init({{
+        client_id: clientId,
+        request_access: ["write"],
+        nonce,
+      }}, finishLogin);
+      document.getElementById("telegram-login").addEventListener("click", () => {{
       const openPopup = window.open;
       window.open = function(url, target, features) {{
         if (
@@ -527,6 +563,7 @@ def _login_page_html(
         ) {{
           const authUrl = new URL(url);
           authUrl.searchParams.set("origin", origin);
+          authUrl.searchParams.set("redirect_uri", origin + "/");
           url = authUrl.toString();
         }}
         return openPopup.call(window, url, target, features);
@@ -536,7 +573,8 @@ def _login_page_html(
       }} finally {{
         window.open = openPopup;
       }}
-    }});
+      }});
+    }}
   </script>
 </body>
 </html>

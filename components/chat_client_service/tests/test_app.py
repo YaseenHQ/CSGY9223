@@ -317,6 +317,9 @@ def test_auth_login_serves_telegram_login_page(client: TestClient) -> None:
     assert "sessionStorage.setItem" in response.text
     assert "localStorage.setItem" in response.text
     assert "/auth/telegram-login" in response.text
+    assert "telegramAuthUrl" in response.text
+    assert 'data.error === "missing id_token"' in response.text
+    assert 'authUrl.searchParams.set("redirect_uri", origin + "/")' in response.text
     assert 'const origin = "https://example.com";' in response.text
     assert 'request_access: ["write"]' in response.text
 

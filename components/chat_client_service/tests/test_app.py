@@ -1,5 +1,10 @@
 """Tests for the FastAPI Telegram OIDC/Bot API service."""
 
+import base64
+import hashlib
+import hmac
+import json
+import time
 from collections.abc import Generator
 from unittest.mock import Mock, patch
 
@@ -61,6 +66,29 @@ def _channel() -> Mock:
     channel.name = "OSSHWBOTTEST"
     channel.channel_type = "group"
     return channel
+
+
+def _telegram_auth_result(*, bot_token: str, telegram_id: int = 42) -> str:
+    payload: dict[str, object] = {
+        "id": telegram_id,
+        "first_name": "Alice",
+        "username": "alice",
+        "auth_date": int(time.time()),
+    }
+    data_check_string = "\n".join(f"{key}={payload[key]}" for key in sorted(payload))
+    secret_key = hashlib.sha256(bot_token.encode()).digest()
+    payload["hash"] = hmac.new(
+        secret_key,
+        data_check_string.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return (
+        base64.urlsafe_b64encode(
+            json.dumps(payload, separators=(",", ":")).encode(),
+        )
+        .rstrip(b"=")
+        .decode()
+    )
 
 
 class _MembershipClient:
@@ -336,6 +364,48 @@ def test_auth_login_code_flow_redirects_to_telegram_oidc(
     assert "response_type=code" in location
     assert "origin=https%3A%2F%2Fexample.com" in location
     assert "code_challenge_method=S256" in location
+
+
+def test_root_serves_telegram_fragment_handler(client: TestClient) -> None:
+    """Root page handles tgAuthResult fragments returned by Telegram."""
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "tgAuthResult" in response.text
+    assert "/auth/telegram-login" in response.text
+
+
+def test_telegram_hash_login_authenticates_session(client: TestClient) -> None:
+    """Hash login result verifies Telegram payload and authenticates session."""
+    bot_token = "123456:bot-secret"  # noqa: S105
+    config = OidcConfig(
+        client_id="123456",
+        client_secret="bot-secret",
+        service_base_url="http://testserver",
+        app_session_secret="app-secret",
+        bot_token=bot_token,
+    )
+    app.dependency_overrides[get_oidc_config] = lambda: config
+
+    session_response = client.post("/auth/sessions")
+    session_id = session_response.json()["session_id"]
+    login_response = client.get(
+        "/auth/login",
+        params={"session_id": session_id},
+        follow_redirects=False,
+    )
+    auth_result = _telegram_auth_result(bot_token=bot_token)
+    callback_response = client.post(
+        "/auth/telegram-login",
+        json={"auth_result": auth_result},
+    )
+    status_response = client.get(f"/auth/sessions/{session_id}")
+
+    assert login_response.status_code == 302
+    assert "telegram_auth_state" in login_response.headers["set-cookie"]
+    assert callback_response.status_code == 200
+    assert status_response.json()["authenticated"] is True
+    assert status_response.json()["telegram_id"] == "42"
 
 
 def test_auth_login_config_supports_telegram_login_library(

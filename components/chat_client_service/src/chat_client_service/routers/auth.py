@@ -6,7 +6,7 @@ import time
 from typing import Annotated
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -15,6 +15,7 @@ from chat_client_service.models import (
     AuthSessionStatusResponse,
     LogoutResponse,
     MeResponse,
+    TelegramHashLoginCallbackRequest,
     TelegramLoginCallbackRequest,
     TelegramLoginConfigResponse,
     TokenResponse,
@@ -25,6 +26,7 @@ from chat_client_service.oidc import (
     begin_login_library,
     complete_login,
     complete_login_library,
+    complete_telegram_hash_login,
     decode_app_token,
 )
 from telegram_client_impl.store import StoredChannel, get_store
@@ -117,13 +119,22 @@ def _auth_code_redirect(
     session_id: str | None,
 ) -> RedirectResponse:
     try:
-        url, _state = begin_login(config, session_id=session_id)
+        url, state = begin_login(config, session_id=session_id)
     except (TypeError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
-    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+    response = RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+    response.set_cookie(
+        "telegram_auth_state",
+        state,
+        httponly=True,
+        max_age=300,
+        samesite="lax",
+        secure=config.service_base_url.startswith("https://"),
+    )
+    return response
 
 
 @router.get("/login/config")
@@ -177,6 +188,27 @@ def auth_login_library_callback(
             nonce=request.nonce,
         )
     except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return _issue_token_response(config=config, token=token, session_id=session_id)
+
+
+@router.post("/telegram-login")
+def auth_telegram_hash_callback(
+    request: TelegramHashLoginCallbackRequest,
+    config: Annotated[OidcConfig, Depends(get_oidc_config)],
+    telegram_auth_state: Annotated[str | None, Cookie()] = None,
+) -> TokenResponse:
+    """Complete Telegram hash login returned as a URL fragment."""
+    try:
+        token, session_id = complete_telegram_hash_login(
+            config=config,
+            auth_result=request.auth_result,
+            state=telegram_auth_state,
+        )
+    except (TypeError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),

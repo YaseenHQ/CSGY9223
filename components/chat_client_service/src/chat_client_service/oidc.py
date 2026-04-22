@@ -28,6 +28,7 @@ class OidcConfig:
     client_secret: str | None
     service_base_url: str
     app_session_secret: str | None
+    bot_token: str | None = None
     app_session_ttl_seconds: int = 3600
     authorization_endpoint: str = "https://oauth.telegram.org/auth"
     token_endpoint: str = "https://oauth.telegram.org/token"  # noqa: S105
@@ -45,6 +46,7 @@ class OidcConfig:
             or _client_secret_from_bot_token(bot_token),
             service_base_url=getenv("SERVICE_BASE_URL", "http://localhost:8000"),
             app_session_secret=getenv("APP_SESSION_SECRET") or bot_token,
+            bot_token=bot_token,
             app_session_ttl_seconds=int(getenv("APP_SESSION_TTL_SECONDS", "3600")),
             authorization_endpoint=getenv(
                 "TELEGRAM_OIDC_AUTHORIZATION_ENDPOINT",
@@ -165,6 +167,82 @@ def complete_login(
         raise TypeError(msg)
     claims = verify_id_token(config=config, id_token=id_token, nonce=pending.nonce)
     return issue_app_token(config=config, claims=claims), pending.session_id
+
+
+def complete_telegram_hash_login(
+    *,
+    config: OidcConfig,
+    auth_result: str,
+    state: str | None,
+) -> tuple[str, str | None]:
+    """Verify Telegram's hash-based login result and issue a local token."""
+    if not state:
+        msg = "Missing Telegram login state"
+        raise ValueError(msg)
+    pending = get_store().consume_oidc_state(
+        state=state,
+        ttl_seconds=_STATE_TTL_SECONDS,
+        now=int(time.time()),
+    )
+    if pending is None:
+        msg = "Invalid or expired Telegram login state"
+        raise ValueError(msg)
+    claims = verify_telegram_hash_login(config=config, auth_result=auth_result)
+    return issue_app_token(config=config, claims=claims), pending.session_id
+
+
+def verify_telegram_hash_login(
+    *,
+    config: OidcConfig,
+    auth_result: str,
+) -> dict[str, Any]:
+    """Validate signed Telegram Login Widget data from tgAuthResult."""
+    if not config.bot_token:
+        msg = "TELEGRAM_BOT_TOKEN is required"
+        raise ValueError(msg)
+    raw_payload = _decode_b64(auth_result)
+    payload = json.loads(raw_payload)
+    if not isinstance(payload, dict):
+        msg = "Telegram login payload is not an object"
+        raise TypeError(msg)
+
+    received_hash = payload.get("hash")
+    if not isinstance(received_hash, str):
+        msg = "Telegram login payload is missing hash"
+        raise TypeError(msg)
+    data_check_string = "\n".join(
+        f"{key}={payload[key]}"
+        for key in sorted(payload)
+        if key != "hash" and payload[key] is not None
+    )
+    secret_key = hashlib.sha256(config.bot_token.encode()).digest()
+    expected_hash = hmac.new(
+        secret_key,
+        data_check_string.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected_hash, received_hash):
+        msg = "Telegram login hash mismatch"
+        raise ValueError(msg)
+
+    auth_date = payload.get("auth_date")
+    if not isinstance(auth_date, int) or auth_date < int(time.time()) - 86400:
+        msg = "Telegram login payload is expired"
+        raise ValueError(msg)
+
+    telegram_id = payload.get("id")
+    if not isinstance(telegram_id, int):
+        msg = "Telegram login payload is missing user id"
+        raise TypeError(msg)
+    first_name = str(payload.get("first_name") or "")
+    last_name = str(payload.get("last_name") or "")
+    return {
+        "id": telegram_id,
+        "sub": str(telegram_id),
+        "preferred_username": payload.get("username"),
+        "name": " ".join(part for part in (first_name, last_name) if part),
+        "picture": payload.get("photo_url"),
+    }
 
 
 def verify_id_token(

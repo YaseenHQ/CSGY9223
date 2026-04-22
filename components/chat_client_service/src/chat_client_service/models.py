@@ -87,6 +87,12 @@ class TelegramLoginCallbackRequest(BaseModel):
     nonce: str = Field(min_length=1)
 
 
+class TelegramHashLoginCallbackRequest(BaseModel):
+    """Signed Telegram login payload returned in tgAuthResult fragments."""
+
+    auth_result: str = Field(min_length=1)
+
+
 class MeResponse(BaseModel):
     """Authenticated Telegram identity extracted from the service token."""
 

@@ -33,8 +33,10 @@ def root() -> HTMLResponse:
     const statusBox = document.getElementById("status");
     const fragment = new URLSearchParams(window.location.hash.slice(1));
     const authResult = fragment.get("tgAuthResult");
-    const state = sessionStorage.getItem("telegram_auth_state");
-    const sessionId = sessionStorage.getItem("telegram_auth_session_id");
+    const state = sessionStorage.getItem("telegram_auth_state") ||
+      localStorage.getItem("telegram_auth_state");
+    const sessionId = sessionStorage.getItem("telegram_auth_session_id") ||
+      localStorage.getItem("telegram_auth_session_id");
     if (!authResult) {
       statusBox.textContent = "Chat Client Service";
     } else {
@@ -55,6 +57,8 @@ def root() -> HTMLResponse:
         }
         sessionStorage.removeItem("telegram_auth_state");
         sessionStorage.removeItem("telegram_auth_session_id");
+        localStorage.removeItem("telegram_auth_state");
+        localStorage.removeItem("telegram_auth_session_id");
         statusBox.textContent = "Login complete. Return to your API client.";
         window.history.replaceState(null, "", "/");
       });

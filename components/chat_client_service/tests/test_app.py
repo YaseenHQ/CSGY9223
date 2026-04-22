@@ -334,6 +334,7 @@ def test_auth_login_prefers_oidc_code_flow_when_secret_configured(
 
     assert response.status_code == 200
     assert "sessionStorage.setItem" in response.text
+    assert "localStorage.setItem" in response.text
     assert "window.location.replace" in response.text
     assert "https://oauth.telegram.org/auth?" in response.text
     assert "response_type=code" in response.text
@@ -374,6 +375,7 @@ def test_root_serves_telegram_fragment_handler(client: TestClient) -> None:
     assert "tgAuthResult" in response.text
     assert "/auth/telegram-login" in response.text
     assert "sessionStorage.getItem" in response.text
+    assert "localStorage.getItem" in response.text
 
 
 def test_telegram_hash_login_authenticates_session(client: TestClient) -> None:

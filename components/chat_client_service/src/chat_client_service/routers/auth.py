@@ -402,10 +402,13 @@ def _login_redirect_html(
   <pre>Redirecting to Telegram...</pre>
   <script>
     sessionStorage.setItem("telegram_auth_state", {state_json});
+    localStorage.setItem("telegram_auth_state", {state_json});
     if ({session_id_json} !== null) {{
       sessionStorage.setItem("telegram_auth_session_id", {session_id_json});
+      localStorage.setItem("telegram_auth_session_id", {session_id_json});
     }} else {{
       sessionStorage.removeItem("telegram_auth_session_id");
+      localStorage.removeItem("telegram_auth_session_id");
     }}
     window.location.replace({url_json});
   </script>

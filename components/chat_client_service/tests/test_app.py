@@ -1,9 +1,11 @@
 """Tests for chat_client_service FastAPI endpoints."""
 
 from collections.abc import Generator
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
+from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
 from chat_client_api import Channel, Message
@@ -39,6 +41,86 @@ def test_health_endpoint() -> None:
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_health_request_emits_success_telemetry() -> None:
+    """GET /health records latency and marks the request as successful."""
+    with patch(
+        "chat_client_service.middleware.telemetry._publish_request_metrics"
+    ) as publish_metrics:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    publish_metrics.assert_called_once()
+    kwargs: dict[str, Any] = publish_metrics.await_args.kwargs
+    assert kwargs["service"] == "chat_client_service"
+    assert kwargs["endpoint"] == "/health"
+    assert kwargs["status_code"] == 200
+    assert kwargs["success"] == 1
+    assert kwargs["failure"] == 0
+    assert kwargs["latency_ms"] >= 0
+
+
+def test_parameterized_route_uses_template_endpoint_dimension(
+    mock_chat_client: Mock,
+) -> None:
+    """Telemetry uses the FastAPI route template instead of the raw request path."""
+    mock_chat_client.get_message.return_value = _message_dto(message_id="m-1")
+
+    with patch(
+        "chat_client_service.middleware.telemetry._publish_request_metrics"
+    ) as publish_metrics:
+        response = client.get("/chat/messages/m-1")
+
+    assert response.status_code == 200
+    kwargs: dict[str, Any] = publish_metrics.await_args.kwargs
+    assert kwargs["endpoint"] == "/chat/messages/{message_id}"
+    assert kwargs["status_code"] == 200
+    assert kwargs["success"] == 1
+    assert kwargs["failure"] == 0
+
+
+def test_failure_response_emits_failure_telemetry(mock_chat_client: Mock) -> None:
+    """HTTP responses with status >= 400 are recorded as failures."""
+    mock_chat_client.get_channels.side_effect = RuntimeError("Telegram error")
+
+    with patch(
+        "chat_client_service.middleware.telemetry._publish_request_metrics"
+    ) as publish_metrics:
+        response = client.get("/chat/channels")
+
+    assert response.status_code == 500
+    kwargs: dict[str, Any] = publish_metrics.await_args.kwargs
+    assert kwargs["endpoint"] == "/chat/channels"
+    assert kwargs["status_code"] == 500
+    assert kwargs["success"] == 0
+    assert kwargs["failure"] == 1
+
+
+def test_unhandled_exception_still_emits_failure_telemetry() -> None:
+    """Unhandled exceptions still publish telemetry before FastAPI returns 500."""
+    router = APIRouter()
+
+    @router.get("/telemetry-boom")
+    def telemetry_boom() -> None:
+        raise RuntimeError("boom")
+
+    app.include_router(router)
+    try:
+        boom_client = TestClient(app, follow_redirects=False, raise_server_exceptions=False)
+        with patch(
+            "chat_client_service.middleware.telemetry._publish_request_metrics"
+        ) as publish_metrics:
+            response = boom_client.get("/telemetry-boom")
+    finally:
+        app.router.routes.pop()
+
+    assert response.status_code == 500
+    kwargs: dict[str, Any] = publish_metrics.await_args.kwargs
+    assert kwargs["endpoint"] == "/telemetry-boom"
+    assert kwargs["status_code"] == 500
+    assert kwargs["success"] == 0
+    assert kwargs["failure"] == 1
 
 
 # ---------------------------------------------------------------------------

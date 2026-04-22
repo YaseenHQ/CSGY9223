@@ -4,7 +4,13 @@ version = "0.1.0"
 description = "FastAPI service exposing chat client operations over HTTP"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["fastapi>=0.115.0", "uvicorn>=0.30.0", "chat-client-api", "telegram-client-impl"]
+dependencies = [
+    "fastapi>=0.115.0",
+ "uvicorn>=0.30.0",
+ "chat-client-api",
+ "telegram-client-impl",
+ "aws-embedded-metrics>=3.5.0",
+]
 
 [build-system]
 requires = ["hatchling"]

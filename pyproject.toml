@@ -11,6 +11,7 @@ authors = [
 dependencies = [
     "telegram-client-impl",
     "chat-client-api",
+    "aws-embedded-metrics>=3.5.0",
 ]
 
 [project.optional-dependencies]

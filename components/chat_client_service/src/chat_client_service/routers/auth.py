@@ -325,26 +325,15 @@ def _login_page_html(
   <p>This authenticates your API session. Chat operations remain bot-scoped.</p>
   <button id="telegram-login" type="button">Continue with Telegram</button>
   <pre id="status"></pre>
+  <script src="https://oauth.telegram.org/js/telegram-login.js?3"></script>
   <script>
     const clientId = Number({client_id_json});
     const nonce = {nonce_json};
     const origin = {origin_json};
     const sessionHint = {session_hint_json};
     const statusBox = document.getElementById("status");
-    let authPopup = null;
     function show(message) {{
       statusBox.textContent = message;
-    }}
-    function buildResult(data) {{
-      if (!data || data.error) {{
-        return {{error: data && data.error ? data.error : "Telegram login failed."}};
-      }}
-      const result = data.result || data;
-      const idToken = typeof result === "string" ? result : result.id_token;
-      if (!idToken) {{
-        return {{error: "Telegram did not return an id_token."}};
-      }}
-      return {{id_token: idToken}};
     }}
     async function finishLogin(data) {{
       if (!data || data.error) {{
@@ -367,55 +356,28 @@ def _login_page_html(
       }}
       show("Login complete. " + sessionHint);
     }}
-    window.addEventListener("message", (event) => {{
-      if (event.origin !== "https://oauth.telegram.org") {{
-        return;
-      }}
-      if (authPopup && event.source !== authPopup) {{
-        return;
-      }}
-      let data = event.data;
-      if (typeof data === "string") {{
-        try {{
-          data = JSON.parse(data);
-        }} catch (_error) {{
-          return;
-        }}
-      }}
-      if (data && data.event === "auth_result") {{
-        if (authPopup && !authPopup.closed) {{
-          authPopup.close();
-        }}
-        finishLogin(buildResult(data));
-      }}
-    }});
+    Telegram.Login.init({{
+      client_id: clientId,
+      request_access: ["write"],
+      nonce,
+    }}, finishLogin);
     document.getElementById("telegram-login").addEventListener("click", () => {{
-      const params = new URLSearchParams({{
-        response_type: "post_message",
-        client_id: String(clientId),
-        redirect_uri: origin + "/auth/login",
-        origin,
-        scope: "openid profile telegram:bot_access",
-        nonce,
-      }});
-      const width = 550;
-      const height = 650;
-      const left = Math.max(0, (screen.width - width) / 2);
-      const top = Math.max(0, (screen.height - height) / 2);
-      const features = [
-        `width=${{width}}`,
-        `height=${{height}}`,
-        `left=${{left}}`,
-        `top=${{top}}`,
-        "status=0",
-        "location=0",
-        "menubar=0",
-        "toolbar=0",
-      ].join(",");
-      const authUrl = "https://oauth.telegram.org/auth?" + params.toString();
-      authPopup = window.open(authUrl, "telegram_oidc_login", features);
-      if (!authPopup) {{
-        show("Popup blocked. Allow popups and try again.");
+      const openPopup = window.open;
+      window.open = function(url, target, features) {{
+        if (
+          typeof url === "string" &&
+          url.startsWith("https://oauth.telegram.org/auth?")
+        ) {{
+          const authUrl = new URL(url);
+          authUrl.searchParams.set("origin", origin);
+          url = authUrl.toString();
+        }}
+        return openPopup.call(window, url, target, features);
+      }};
+      try {{
+        Telegram.Login.open(finishLogin);
+      }} finally {{
+        window.open = openPopup;
       }}
     }});
   </script>

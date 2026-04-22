@@ -283,11 +283,11 @@ def test_auth_login_serves_telegram_login_page(client: TestClient) -> None:
     response = client.get("/auth/login")
 
     assert response.status_code == 200
-    assert "https://oauth.telegram.org/auth?" in response.text
-    assert 'response_type: "post_message"' in response.text
-    assert "result.id_token" in response.text
+    assert "https://oauth.telegram.org/js/telegram-login.js?3" in response.text
+    assert "Telegram.Login.init" in response.text
+    assert "authUrl.searchParams.set" in response.text
     assert 'const origin = "https://example.com";' in response.text
-    assert "openid profile telegram:bot_access" in response.text
+    assert 'request_access: ["write"]' in response.text
 
 
 def test_auth_login_code_flow_redirects_to_telegram_oidc(

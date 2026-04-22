@@ -128,6 +128,20 @@ disable_error_code = ["misc"]
 module = "issue_tracker_integration.client"
 disable_error_code = ["no-any-return"]
 
+# Team 7 packages ship without py.typed; adapter return types come from our ABCs.
+[[tool.mypy.overrides]]
+module = [
+    "issue_tracker_client_api",
+    "issue_tracker_client_api.*",
+    "trello_client_impl",
+    "trello_client_impl.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "issue_tracker_integration.trello_adapter"
+disable_error_code = ["no-any-return", "misc"]
+
 [tool.uv.workspace]
 members = [
     "components/telegram_client_impl",
@@ -140,6 +154,8 @@ members = [
 [tool.uv.sources]
 chat-client-api = { git = "https://github.com/HarshithKoriRaj/Shared-API.git" }
 ospd-issue-tracker-api = { git = "https://github.com/tatyanacthomas/ospd_issue_tracker.git" }
+issue-tracker-client-api = { git = "https://github.com/somadisingh/ospsd-team7-issue-tracker.git", subdirectory = "components/issue_tracker_client_api" }
+issue-tracker-client-impl = { git = "https://github.com/somadisingh/ospsd-team7-issue-tracker.git", subdirectory = "components/trello_client_impl" }
 telegram-client-impl = { workspace = true }
 chat-client-service = { workspace = true }
 chat-client-service-api-client = { workspace = true }

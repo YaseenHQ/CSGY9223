@@ -448,15 +448,37 @@ wheels = [
 ]
 
 [[package]]
+name = "issue-tracker-client-api"
+version = "0.1.0"
+source = { git = "https://github.com/somadisingh/ospsd-team7-issue-tracker.git?subdirectory=components%2Fissue_tracker_client_api#16040e1ccd5e7e79c8b3819a0209b103196ba98f" }
+
+[[package]]
+name = "issue-tracker-client-impl"
+version = "0.1.0"
+source = { git = "https://github.com/somadisingh/ospsd-team7-issue-tracker.git?subdirectory=components%2Ftrello_client_impl#16040e1ccd5e7e79c8b3819a0209b103196ba98f" }
+dependencies = [
+    { name = "issue-tracker-client-api" },
+    { name = "requests" },
+]
+
+[[package]]
 name = "issue-tracker-integration"
 version = "0.1.0"
 source = { editable = "components/issue_tracker_integration" }
 dependencies = [
+    { name = "issue-tracker-client-api" },
+    { name = "issue-tracker-client-impl" },
     { name = "ospd-issue-tracker-api" },
+    { name = "requests" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ospd-issue-tracker-api", git = "https://github.com/tatyanacthomas/ospd_issue_tracker.git" }]
+requires-dist = [
+    { name = "issue-tracker-client-api", git = "https://github.com/somadisingh/ospsd-team7-issue-tracker.git?subdirectory=components%2Fissue_tracker_client_api" },
+    { name = "issue-tracker-client-impl", git = "https://github.com/somadisingh/ospsd-team7-issue-tracker.git?subdirectory=components%2Ftrello_client_impl" },
+    { name = "ospd-issue-tracker-api", git = "https://github.com/tatyanacthomas/ospd_issue_tracker.git" },
+    { name = "requests", specifier = ">=2.31.0" },
+]
 
 [[package]]
 name = "jinja2"

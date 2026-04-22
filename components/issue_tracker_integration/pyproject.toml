@@ -4,7 +4,12 @@ version = "0.1.0"
 description = "Issue tracker integration bridging ospd-issue-tracker-api with the chat vertical"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["ospd-issue-tracker-api"]
+dependencies = [
+    "ospd-issue-tracker-api",
+    "issue-tracker-client-api",
+    "issue-tracker-client-impl",
+    "requests>=2.31.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -15,3 +20,5 @@ packages = ["src/issue_tracker_integration"]
 
 [tool.uv.sources]
 ospd-issue-tracker-api = { git = "https://github.com/tatyanacthomas/ospd_issue_tracker.git" }
+issue-tracker-client-api = { git = "https://github.com/somadisingh/ospsd-team7-issue-tracker.git", subdirectory = "components/issue_tracker_client_api" }
+issue-tracker-client-impl = { git = "https://github.com/somadisingh/ospsd-team7-issue-tracker.git", subdirectory = "components/trello_client_impl" }

@@ -9,6 +9,4 @@ accepted for compatibility.
 The service owner configures the Bot API token, service base URL, webhook
 secret, and storage path. The service derives the Telegram Login client id and
 default app-session signing secret from the bot token unless explicit overrides
-are set. The OIDC client secret is only needed for `GET /auth/login?flow=code`;
-the default service-hosted login page does not use it. API consumers do not
-configure Telegram credentials.
+are set. API consumers do not configure Telegram credentials.

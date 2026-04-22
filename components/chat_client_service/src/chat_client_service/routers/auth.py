@@ -89,25 +89,33 @@ def auth_login(
     session_id: Annotated[str | None, Query(min_length=1)] = None,
     flow: Annotated[str, Query(pattern="^(page|code)$")] = "page",
 ) -> HTMLResponse | RedirectResponse:
-    """Start Telegram Login with a service-hosted page or OIDC code redirect."""
+    """Start Telegram Login with OIDC code flow or the hosted page fallback."""
     _require_known_session(session_id)
-    if flow == "page":
-        try:
-            client_id, nonce = begin_login_library(config, session_id=session_id)
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(exc),
-            ) from exc
-        return HTMLResponse(
-            content=_login_page_html(
-                client_id=client_id,
-                nonce=nonce,
-                origin=config.service_base_url.rstrip("/"),
-                session_id=session_id,
-            )
-        )
+    if flow == "code":
+        return _auth_code_redirect(config=config, session_id=session_id)
 
+    try:
+        client_id, nonce = begin_login_library(config, session_id=session_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    return HTMLResponse(
+        content=_login_page_html(
+            client_id=client_id,
+            nonce=nonce,
+            origin=config.service_base_url.rstrip("/"),
+            session_id=session_id,
+        )
+    )
+
+
+def _auth_code_redirect(
+    *,
+    config: OidcConfig,
+    session_id: str | None,
+) -> RedirectResponse:
     try:
         url, _state = begin_login(config, session_id=session_id)
     except (TypeError, ValueError) as exc:
@@ -317,15 +325,24 @@ def _login_page_html(
   <p>This authenticates your API session. Chat operations remain bot-scoped.</p>
   <button id="telegram-login" type="button">Continue with Telegram</button>
   <pre id="status"></pre>
-  <script src="https://oauth.telegram.org/js/telegram-login.js?3"></script>
   <script>
     const clientId = Number({client_id_json});
     const nonce = {nonce_json};
     const origin = {origin_json};
     const sessionHint = {session_hint_json};
     const statusBox = document.getElementById("status");
+    let authPopup = null;
     function show(message) {{
       statusBox.textContent = message;
+    }}
+    function buildResult(data) {{
+      if (!data || data.error) {{
+        return {{error: data && data.error ? data.error : "Telegram login failed."}};
+      }}
+      if (!data.result || typeof data.result !== "string") {{
+        return {{error: "Telegram did not return an id_token."}};
+      }}
+      return {{id_token: data.result}};
     }}
     async function finishLogin(data) {{
       if (!data || data.error) {{
@@ -348,14 +365,56 @@ def _login_page_html(
       }}
       show("Login complete. " + sessionHint);
     }}
-    Telegram.Login.init({{
-      client_id: clientId,
-      origin,
-      request_access: ["write"],
-      nonce,
-    }}, finishLogin);
+    window.addEventListener("message", (event) => {{
+      if (event.origin !== "https://oauth.telegram.org") {{
+        return;
+      }}
+      if (authPopup && event.source !== authPopup) {{
+        return;
+      }}
+      let data = event.data;
+      if (typeof data === "string") {{
+        try {{
+          data = JSON.parse(data);
+        }} catch (_error) {{
+          return;
+        }}
+      }}
+      if (data && data.event === "auth_result") {{
+        if (authPopup && !authPopup.closed) {{
+          authPopup.close();
+        }}
+        finishLogin(buildResult(data));
+      }}
+    }});
     document.getElementById("telegram-login").addEventListener("click", () => {{
-      Telegram.Login.open(finishLogin);
+      const params = new URLSearchParams({{
+        response_type: "post_message",
+        client_id: String(clientId),
+        redirect_uri: origin + "/auth/login",
+        origin,
+        scope: "openid profile telegram:bot_access",
+        nonce,
+      }});
+      const width = 550;
+      const height = 650;
+      const left = Math.max(0, (screen.width - width) / 2);
+      const top = Math.max(0, (screen.height - height) / 2);
+      const features = [
+        `width=${{width}}`,
+        `height=${{height}}`,
+        `left=${{left}}`,
+        `top=${{top}}`,
+        "status=0",
+        "location=0",
+        "menubar=0",
+        "toolbar=0",
+      ].join(",");
+      const authUrl = "https://oauth.telegram.org/auth?" + params.toString();
+      authPopup = window.open(authUrl, "telegram_oidc_login", features);
+      if (!authPopup) {{
+        show("Popup blocked. Allow popups and try again.");
+      }}
     }});
   </script>
 </body>

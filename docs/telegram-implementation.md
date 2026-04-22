@@ -23,11 +23,14 @@ by import.
 This branch implements both login paths documented on Telegram's
 [Log In With Telegram](https://core.telegram.org/bots/telegram-login) page.
 
-Primary Telegram Login library path:
+Primary session path:
 
 - `POST /auth/sessions` creates a pending service session.
-- `GET /auth/login/config?session_id=...` returns a server-generated `nonce` and Telegram
-  Login `client_id`.
+- `GET /auth/login?session_id=...` serves the hosted Telegram Login page.
+- `GET /auth/login/config?session_id=...` remains available for custom
+  frontends using Telegram's Login library.
+- The config endpoint returns a server-generated `nonce` and Telegram Login
+  `client_id`.
 - A frontend passes those values to `Telegram.Login.init(...)`.
 - Telegram returns an `id_token` to the frontend callback.
 - `POST /auth/callback` verifies that `id_token` server-side, checks the nonce,
@@ -35,8 +38,8 @@ Primary Telegram Login library path:
 - Adapter-style clients poll `GET /auth/sessions/{session_id}` and use
   `X-Session-ID` on `/chat/*`; direct Bearer tokens remain supported.
 
-The default `GET /auth/login` route serves a minimal Telegram Login page. OIDC
-Authorization Code Flow is also available for OIDC-compatible clients:
+OIDC Authorization Code Flow is available only when Telegram exposes OIDC client
+credentials for the bot:
 
 - `GET /auth/login?flow=code` redirects users to Telegram OIDC.
 - `GET /auth/callback` exchanges the code, validates `id_token`, and checks the
@@ -55,7 +58,7 @@ Optional deployment settings:
 - `APP_SESSION_SECRET` (optional signing override; defaults to bot token)
 - `APP_SESSION_TTL_SECONDS` (optional)
 - `TELEGRAM_OIDC_CLIENT_ID` (optional override; defaults to bot token numeric id)
-- `TELEGRAM_OIDC_CLIENT_SECRET` (required only for `GET /auth/login?flow=code`)
+- `TELEGRAM_OIDC_CLIENT_SECRET` (optional; enables `GET /auth/login?flow=code`)
 - `TELEGRAM_WEBHOOK_SECRET` (optional webhook hardening)
 - `TELEGRAM_WEBHOOK_ALLOWED_UPDATES` (optional comma-separated update types)
 - `TELEGRAM_WEBHOOK_DROP_PENDING_UPDATES` (optional webhook setup flag)

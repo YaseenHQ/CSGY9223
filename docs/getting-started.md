@@ -44,9 +44,9 @@ Users of the hosted API do not set environment variables. They create
 `/auth/sessions`, open the returned `login_url`, and use `X-Session-ID` on
 `/chat/*`.
 
-Only the service deployer sets Telegram credentials. The default Login library
-path requires only the bot token; the service derives Telegram Login `client_id`
-from the bot token's numeric prefix.
+Only the service deployer sets Telegram credentials. The service derives
+Telegram Login `client_id` from the bot token's numeric prefix unless an
+explicit override is set.
 
 ```bash
 export TELEGRAM_BOT_TOKEN=...
@@ -59,8 +59,9 @@ Optional deployment settings:
   `TELEGRAM_BOT_TOKEN`.
 - `TELEGRAM_OIDC_CLIENT_ID`: optional override; defaults to the bot token's
   numeric prefix.
-- `TELEGRAM_OIDC_CLIENT_SECRET`: required only for
-  `GET /auth/login?flow=code`.
+- `TELEGRAM_OIDC_CLIENT_SECRET`: optional; enables
+  `GET /auth/login?flow=code` if Telegram exposes OIDC client credentials for
+  your bot.
 - `SERVICE_BASE_URL`: required for redirect flow and webhook setup.
 - `APP_SESSION_TTL_SECONDS`: local Bearer token lifetime, default `3600`.
 - `CHAT_CLIENT_STORE_PATH`: SQLite path, default `.data/chat_client.sqlite3`.
@@ -79,8 +80,9 @@ Optional deployment settings:
 2. In BotFather, open Bot Settings > Web Login.
 3. Add the origins where the Login library is embedded, for example your Render
    origin `https://your-service.onrender.com`.
-4. Add redirect URIs such as `${SERVICE_BASE_URL}/auth/callback` if you also use
-   the OIDC Authorization Code Flow.
+4. If your Telegram setup exposes OIDC client credentials, add redirect URIs
+   such as `${SERVICE_BASE_URL}/auth/callback` and set
+   `TELEGRAM_OIDC_CLIENT_SECRET`.
 5. Configure the webhook after deploy:
 
 ```bash
@@ -94,9 +96,9 @@ For a custom frontend using Telegram's Login library:
 
 1. Call `POST /auth/sessions`.
 2. Call `GET /auth/login/config?session_id=...`.
-2. Use the returned `client_id` and `nonce` in `Telegram.Login.init(...)`.
-3. Send the returned `id_token` and original `nonce` to `POST /auth/callback`.
-4. Use `X-Session-ID` on `/chat/*`.
+3. Use the returned `client_id` and `nonce` in `Telegram.Login.init(...)`.
+4. Send the returned `id_token` and original `nonce` to `POST /auth/callback`.
+5. Use `X-Session-ID` on `/chat/*`.
 
 ## Render Deploy
 

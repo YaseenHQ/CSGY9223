@@ -174,6 +174,7 @@ def complete_telegram_hash_login(
     config: OidcConfig,
     auth_result: str,
     state: str | None,
+    fallback_session_id: str | None = None,
 ) -> tuple[str, str | None]:
     """Verify Telegram's hash-based login result and issue a local token."""
     if not state:
@@ -188,7 +189,8 @@ def complete_telegram_hash_login(
         msg = "Invalid or expired Telegram login state"
         raise ValueError(msg)
     claims = verify_telegram_hash_login(config=config, auth_result=auth_result)
-    return issue_app_token(config=config, claims=claims), pending.session_id
+    session_id = pending.session_id or _known_session_id(fallback_session_id)
+    return issue_app_token(config=config, claims=claims), session_id
 
 
 def verify_telegram_hash_login(
@@ -243,6 +245,14 @@ def verify_telegram_hash_login(
         "name": " ".join(part for part in (first_name, last_name) if part),
         "picture": payload.get("photo_url"),
     }
+
+
+def _known_session_id(session_id: str | None) -> str | None:
+    if session_id is None:
+        return None
+    if get_store().get_auth_session(session_id=session_id) is None:
+        return None
+    return session_id
 
 
 def verify_id_token(

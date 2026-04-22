@@ -38,6 +38,7 @@ def root() -> HTMLResponse:
     } else {
       fetch("/auth/telegram-login", {
         method: "POST",
+        credentials: "same-origin",
         headers: {"content-type": "application/json"},
         body: JSON.stringify({auth_result: authResult}),
       }).then(async (response) => {

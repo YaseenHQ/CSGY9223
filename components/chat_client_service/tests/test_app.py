@@ -403,6 +403,7 @@ def test_telegram_hash_login_authenticates_session(client: TestClient) -> None:
 
     assert login_response.status_code == 302
     assert "telegram_auth_state" in login_response.headers["set-cookie"]
+    assert "telegram_auth_session_id" in login_response.headers["set-cookie"]
     assert callback_response.status_code == 200
     assert status_response.json()["authenticated"] is True
     assert status_response.json()["telegram_id"] == "42"

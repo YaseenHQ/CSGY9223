@@ -134,6 +134,17 @@ def _auth_code_redirect(
         samesite="lax",
         secure=config.service_base_url.startswith("https://"),
     )
+    if session_id is not None:
+        response.set_cookie(
+            "telegram_auth_session_id",
+            session_id,
+            httponly=True,
+            max_age=300,
+            samesite="lax",
+            secure=config.service_base_url.startswith("https://"),
+        )
+    else:
+        response.delete_cookie("telegram_auth_session_id")
     return response
 
 
@@ -200,6 +211,7 @@ def auth_telegram_hash_callback(
     request: TelegramHashLoginCallbackRequest,
     config: Annotated[OidcConfig, Depends(get_oidc_config)],
     telegram_auth_state: Annotated[str | None, Cookie()] = None,
+    telegram_auth_session_id: Annotated[str | None, Cookie()] = None,
 ) -> TokenResponse:
     """Complete Telegram hash login returned as a URL fragment."""
     try:
@@ -207,6 +219,7 @@ def auth_telegram_hash_callback(
             config=config,
             auth_result=request.auth_result,
             state=telegram_auth_state,
+            fallback_session_id=telegram_auth_session_id,
         )
     except (TypeError, ValueError) as exc:
         raise HTTPException(

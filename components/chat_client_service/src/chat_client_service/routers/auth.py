@@ -93,8 +93,10 @@ def auth_login(
 ) -> HTMLResponse | RedirectResponse:
     """Start Telegram Login with OIDC code flow or the hosted page fallback."""
     _require_known_session(session_id)
-    if flow == "code" or (flow == "auto" and config.client_secret):
+    if flow == "code":
         return _auth_code_redirect(config=config, session_id=session_id)
+    if flow == "auto" and config.client_secret:
+        return _auth_code_launch_page(config=config, session_id=session_id)
 
     try:
         client_id, nonce = begin_login_library(config, session_id=session_id)
@@ -126,6 +128,50 @@ def _auth_code_redirect(
             detail=str(exc),
         ) from exc
     response = RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+    _set_auth_cookies(
+        response=response,
+        config=config,
+        state=state,
+        session_id=session_id,
+    )
+    return response
+
+
+def _auth_code_launch_page(
+    *,
+    config: OidcConfig,
+    session_id: str | None,
+) -> HTMLResponse:
+    try:
+        url, state = begin_login(config, session_id=session_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    response = HTMLResponse(
+        content=_login_redirect_html(
+            url=url,
+            state=state,
+            session_id=session_id,
+        )
+    )
+    _set_auth_cookies(
+        response=response,
+        config=config,
+        state=state,
+        session_id=session_id,
+    )
+    return response
+
+
+def _set_auth_cookies(
+    *,
+    response: HTMLResponse | RedirectResponse,
+    config: OidcConfig,
+    state: str,
+    session_id: str | None,
+) -> None:
     response.set_cookie(
         "telegram_auth_state",
         state,
@@ -145,7 +191,6 @@ def _auth_code_redirect(
         )
     else:
         response.delete_cookie("telegram_auth_session_id")
-    return response
 
 
 @router.get("/login/config")
@@ -218,8 +263,8 @@ def auth_telegram_hash_callback(
         token, session_id = complete_telegram_hash_login(
             config=config,
             auth_result=request.auth_result,
-            state=telegram_auth_state,
-            fallback_session_id=telegram_auth_session_id,
+            state=request.state or telegram_auth_state,
+            fallback_session_id=request.session_id or telegram_auth_session_id,
         )
     except (TypeError, ValueError) as exc:
         raise HTTPException(
@@ -335,6 +380,38 @@ def _session_login_url(*, config: OidcConfig, session_id: str) -> str:
 
 def _session_status_url(*, config: OidcConfig, session_id: str) -> str:
     return f"{config.service_base_url.rstrip('/')}/auth/sessions/{session_id}"
+
+
+def _login_redirect_html(
+    *,
+    url: str,
+    state: str,
+    session_id: str | None,
+) -> str:
+    url_json = json.dumps(url)
+    state_json = json.dumps(state)
+    session_id_json = json.dumps(session_id)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Telegram Login</title>
+</head>
+<body>
+  <pre>Redirecting to Telegram...</pre>
+  <script>
+    sessionStorage.setItem("telegram_auth_state", {state_json});
+    if ({session_id_json} !== null) {{
+      sessionStorage.setItem("telegram_auth_session_id", {session_id_json});
+    }} else {{
+      sessionStorage.removeItem("telegram_auth_session_id");
+    }}
+    window.location.replace({url_json});
+  </script>
+</body>
+</html>
+"""
 
 
 def _login_page_html(

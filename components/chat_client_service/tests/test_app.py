@@ -332,12 +332,12 @@ def test_auth_login_prefers_oidc_code_flow_when_secret_configured(
 
     response = client.get("/auth/login", follow_redirects=False)
 
-    assert response.status_code == 302
-    location = response.headers["location"]
-    assert location.startswith("https://oauth.telegram.org/auth?")
-    assert "response_type=code" in location
-    assert "origin=https%3A%2F%2Fexample.com" in location
-    assert "code_challenge_method=S256" in location
+    assert response.status_code == 200
+    assert "sessionStorage.setItem" in response.text
+    assert "window.location.replace" in response.text
+    assert "https://oauth.telegram.org/auth?" in response.text
+    assert "response_type=code" in response.text
+    assert "origin=https%3A%2F%2Fexample.com" in response.text
 
 
 def test_auth_login_code_flow_redirects_to_telegram_oidc(
@@ -373,6 +373,7 @@ def test_root_serves_telegram_fragment_handler(client: TestClient) -> None:
     assert response.status_code == 200
     assert "tgAuthResult" in response.text
     assert "/auth/telegram-login" in response.text
+    assert "sessionStorage.getItem" in response.text
 
 
 def test_telegram_hash_login_authenticates_session(client: TestClient) -> None:
@@ -394,14 +395,24 @@ def test_telegram_hash_login_authenticates_session(client: TestClient) -> None:
         params={"session_id": session_id},
         follow_redirects=False,
     )
+    state = login_response.text.split(
+        'sessionStorage.setItem("telegram_auth_state", "',
+        1,
+    )[1].split('"', 1)[0]
+    client.cookies.clear()
     auth_result = _telegram_auth_result(bot_token=bot_token)
     callback_response = client.post(
         "/auth/telegram-login",
-        json={"auth_result": auth_result},
+        json={
+            "auth_result": auth_result,
+            "state": state,
+            "session_id": session_id,
+        },
     )
     status_response = client.get(f"/auth/sessions/{session_id}")
 
-    assert login_response.status_code == 302
+    assert login_response.status_code == 200
+    assert "telegram_auth_session_id" in login_response.text
     assert "telegram_auth_state" in login_response.headers["set-cookie"]
     assert "telegram_auth_session_id" in login_response.headers["set-cookie"]
     assert callback_response.status_code == 200

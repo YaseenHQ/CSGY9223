@@ -91,6 +91,8 @@ class TelegramHashLoginCallbackRequest(BaseModel):
     """Signed Telegram login payload returned in tgAuthResult fragments."""
 
     auth_result: str = Field(min_length=1)
+    state: str | None = None
+    session_id: str | None = None
 
 
 class MeResponse(BaseModel):

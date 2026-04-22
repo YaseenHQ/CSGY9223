@@ -339,10 +339,12 @@ def _login_page_html(
       if (!data || data.error) {{
         return {{error: data && data.error ? data.error : "Telegram login failed."}};
       }}
-      if (!data.result || typeof data.result !== "string") {{
+      const result = data.result || data;
+      const idToken = typeof result === "string" ? result : result.id_token;
+      if (!idToken) {{
         return {{error: "Telegram did not return an id_token."}};
       }}
-      return {{id_token: data.result}};
+      return {{id_token: idToken}};
     }}
     async function finishLogin(data) {{
       if (!data || data.error) {{

@@ -285,6 +285,7 @@ def test_auth_login_serves_telegram_login_page(client: TestClient) -> None:
     assert response.status_code == 200
     assert "https://oauth.telegram.org/auth?" in response.text
     assert 'response_type: "post_message"' in response.text
+    assert "result.id_token" in response.text
     assert 'const origin = "https://example.com";' in response.text
     assert "openid profile telegram:bot_access" in response.text
 

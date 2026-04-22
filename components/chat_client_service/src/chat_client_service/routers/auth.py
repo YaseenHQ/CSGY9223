@@ -103,6 +103,7 @@ def auth_login(
             content=_login_page_html(
                 client_id=client_id,
                 nonce=nonce,
+                origin=config.service_base_url.rstrip("/"),
                 session_id=session_id,
             )
         )
@@ -131,7 +132,11 @@ def auth_login_config(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
-    return TelegramLoginConfigResponse(client_id=client_id, nonce=nonce)
+    return TelegramLoginConfigResponse(
+        client_id=client_id,
+        nonce=nonce,
+        origin=config.service_base_url.rstrip("/"),
+    )
 
 
 @router.get("/callback")
@@ -283,6 +288,7 @@ def _login_page_html(
     *,
     client_id: str,
     nonce: str,
+    origin: str,
     session_id: str | None,
 ) -> str:
     session_hint = (
@@ -292,6 +298,7 @@ def _login_page_html(
     )
     client_id_json = json.dumps(client_id)
     nonce_json = json.dumps(nonce)
+    origin_json = json.dumps(origin)
     session_hint_json = json.dumps(session_hint)
     return f"""<!doctype html>
 <html lang="en">
@@ -314,6 +321,7 @@ def _login_page_html(
   <script>
     const clientId = Number({client_id_json});
     const nonce = {nonce_json};
+    const origin = {origin_json};
     const sessionHint = {session_hint_json};
     const statusBox = document.getElementById("status");
     function show(message) {{
@@ -342,6 +350,7 @@ def _login_page_html(
     }}
     Telegram.Login.init({{
       client_id: clientId,
+      origin,
       request_access: ["write"],
       nonce,
     }}, finishLogin);

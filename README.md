@@ -68,7 +68,6 @@ Telegram credentials; they only log in through `/auth/*`.
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | Bot token from [@BotFather](https://t.me/BotFather), used for Bot API send/delete/webhook calls. |
 | `SERVICE_BASE_URL` | Render URL, e.g. `https://your-service.onrender.com`; used for login URLs and webhook setup. |
-| `TELEGRAM_WEBHOOK_SECRET` | Random webhook secret checked on `/telegram/webhook`. |
 | `CHAT_CLIENT_STORE_PATH` | SQLite store path. Use `/var/data/chat_client.sqlite3` on Render. |
 
 Optional deployment settings:
@@ -79,6 +78,7 @@ Optional deployment settings:
 | `APP_SESSION_TTL_SECONDS` | `3600` | Local Bearer token lifetime. |
 | `TELEGRAM_OIDC_CLIENT_ID` | bot token numeric prefix | Override only if BotFather displays a separate Web Login Client ID. |
 | `TELEGRAM_OIDC_CLIENT_SECRET` | unset | Required only for `GET /auth/login?flow=code`. The default login page does not use it. |
+| `TELEGRAM_WEBHOOK_SECRET` | unset | Optional webhook hardening. If set, Telegram must send the same secret header. |
 | `TELEGRAM_WEBHOOK_ALLOWED_UPDATES` | `message,edited_message,channel_post,edited_channel_post,my_chat_member` | Comma-separated Bot API update types for webhook setup. |
 | `TELEGRAM_WEBHOOK_DROP_PENDING_UPDATES` | unset | Set to `true` to discard pending updates while configuring the webhook. |
 | `TELEGRAM_BOT_API_BASE_URL` | `https://api.telegram.org` | Override only for a custom Bot API server. |
@@ -126,7 +126,6 @@ After deploy, configure Telegram to send updates to the service:
 ```bash
 export TELEGRAM_BOT_TOKEN=...
 export SERVICE_BASE_URL=https://your-service.example
-export TELEGRAM_WEBHOOK_SECRET=...
 uv run python scripts/configure_telegram_webhook.py
 ```
 
@@ -134,8 +133,8 @@ For group reads, add the bot to the chat and make sure the webhook is configured
 so Telegram delivers new messages to `/telegram/webhook`. Replace
 `OSSHWBOTTEST` in examples with any group, channel, or DM where the bot is
 present. `me` means the logged-in user's direct chat with the bot.
-The webhook rejects requests unless `TELEGRAM_WEBHOOK_SECRET` is set and Telegram
-sends the matching secret header.
+If `TELEGRAM_WEBHOOK_SECRET` is set, the webhook rejects requests unless
+Telegram sends the matching secret header.
 Telegram keeps undelivered updates for at most 24 hours, and `getUpdates` cannot
 be used while a webhook is configured.
 

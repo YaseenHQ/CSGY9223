@@ -48,7 +48,6 @@ Required service-owned Render environment variables:
 
 - `TELEGRAM_BOT_TOKEN`
 - `SERVICE_BASE_URL`
-- `TELEGRAM_WEBHOOK_SECRET`
 - `CHAT_CLIENT_STORE_PATH`
 
 Optional deployment settings:
@@ -57,6 +56,7 @@ Optional deployment settings:
 - `APP_SESSION_TTL_SECONDS` (optional)
 - `TELEGRAM_OIDC_CLIENT_ID` (optional override; defaults to bot token numeric id)
 - `TELEGRAM_OIDC_CLIENT_SECRET` (required only for `GET /auth/login?flow=code`)
+- `TELEGRAM_WEBHOOK_SECRET` (optional webhook hardening)
 - `TELEGRAM_WEBHOOK_ALLOWED_UPDATES` (optional comma-separated update types)
 - `TELEGRAM_WEBHOOK_DROP_PENDING_UPDATES` (optional webhook setup flag)
 

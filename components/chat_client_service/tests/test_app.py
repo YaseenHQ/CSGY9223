@@ -221,11 +221,10 @@ def test_telegram_webhook_records_update(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Webhook updates become bot-observed reads."""
-    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "secret")
+    monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET", raising=False)
 
     response = client.post(
         "/telegram/webhook",
-        headers={"X-Telegram-Bot-Api-Secret-Token": "secret"},
         json={
             "update_id": 1,
             "message": {
@@ -286,6 +285,8 @@ def test_auth_login_serves_telegram_login_page(client: TestClient) -> None:
     assert response.status_code == 200
     assert "https://oauth.telegram.org/js/telegram-login.js?3" in response.text
     assert "Telegram.Login.init" in response.text
+    assert 'const origin = "https://example.com";' in response.text
+    assert "origin," in response.text
     assert 'request_access: ["write"]' in response.text
 
 
@@ -330,6 +331,7 @@ def test_auth_login_config_supports_telegram_login_library(
 
     assert response.status_code == 200
     assert response.json()["client_id"] == "123"
+    assert response.json()["origin"] == "https://example.com"
     assert response.json()["nonce"]
 
 

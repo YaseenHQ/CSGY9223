@@ -64,7 +64,8 @@ Optional deployment settings:
 - `SERVICE_BASE_URL`: required for redirect flow and webhook setup.
 - `APP_SESSION_TTL_SECONDS`: local Bearer token lifetime, default `3600`.
 - `CHAT_CLIENT_STORE_PATH`: SQLite path, default `.data/chat_client.sqlite3`.
-- `TELEGRAM_WEBHOOK_SECRET`: required webhook secret for deployed services.
+- `TELEGRAM_WEBHOOK_SECRET`: optional webhook hardening. If set, Telegram must
+  send the same secret header.
 - `TELEGRAM_WEBHOOK_ALLOWED_UPDATES`: comma-separated update types for webhook
   setup; defaults to message, channel-post, and bot-membership updates this
   service records.
@@ -115,7 +116,6 @@ Set only these manual Render values:
 ```env
 TELEGRAM_BOT_TOKEN=...
 SERVICE_BASE_URL=https://your-service.onrender.com
-TELEGRAM_WEBHOOK_SECRET=...
 ```
 
 The blueprint sets:
@@ -133,7 +133,8 @@ chat. Replace `OSSHWBOTTEST` with any group or channel where your bot is
 present. Use `channel_id=me` for the logged-in user's direct chat with the bot.
 Message responses return opaque ids in `channel_id:message_id` form; pass that
 id to `DELETE /chat/messages/{message_id}`. The webhook rejects requests unless
-`TELEGRAM_WEBHOOK_SECRET` is configured and sent by Telegram.
+`TELEGRAM_WEBHOOK_SECRET` is configured and sent by Telegram. Leaving it unset
+uses Telegram's basic webhook mode without the extra secret header.
 
 Telegram stores undelivered bot updates for at most 24 hours, and `getUpdates`
 cannot be used while the webhook is configured.

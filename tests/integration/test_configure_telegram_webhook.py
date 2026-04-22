@@ -52,7 +52,7 @@ def test_configure_webhook_allows_update_override(
     """Deployers can override allowed_updates without editing the script."""
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "bot-token")
     monkeypatch.setenv("SERVICE_BASE_URL", "https://example.com")
-    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "secret")
+    monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET", raising=False)
     monkeypatch.setenv("TELEGRAM_WEBHOOK_ALLOWED_UPDATES", "message,chat_member")
     response = Mock(spec=httpx.Response)
     response.json.return_value = {"ok": True, "result": True}
@@ -66,4 +66,5 @@ def test_configure_webhook_allows_update_override(
 
     payload: dict[str, Any] = post.call_args.kwargs["json"]
     assert exit_code == 0
+    assert "secret_token" not in payload
     assert payload["allowed_updates"] == ["message", "chat_member"]

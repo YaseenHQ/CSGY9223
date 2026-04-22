@@ -22,11 +22,8 @@ def main() -> int:
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
     service_base_url = os.getenv("SERVICE_BASE_URL")
     secret = os.getenv("TELEGRAM_WEBHOOK_SECRET")
-    if not bot_token or not service_base_url or not secret:
-        sys.stderr.write(
-            "TELEGRAM_BOT_TOKEN, SERVICE_BASE_URL, and "
-            "TELEGRAM_WEBHOOK_SECRET are required\n"
-        )
+    if not bot_token or not service_base_url:
+        sys.stderr.write("TELEGRAM_BOT_TOKEN and SERVICE_BASE_URL are required\n")
         return 2
 
     bot_api_base_url = os.getenv(
@@ -36,8 +33,9 @@ def main() -> int:
     payload: dict[str, object] = {
         "url": webhook_url,
         "allowed_updates": _allowed_updates_from_env(),
-        "secret_token": secret,
     }
+    if secret:
+        payload["secret_token"] = secret
     if _env_bool("TELEGRAM_WEBHOOK_DROP_PENDING_UPDATES"):
         payload["drop_pending_updates"] = True
 

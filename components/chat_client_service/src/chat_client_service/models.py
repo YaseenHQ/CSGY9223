@@ -77,6 +77,7 @@ class TelegramLoginConfigResponse(BaseModel):
 
     client_id: str
     nonce: str
+    origin: str
 
 
 class TelegramLoginCallbackRequest(BaseModel):

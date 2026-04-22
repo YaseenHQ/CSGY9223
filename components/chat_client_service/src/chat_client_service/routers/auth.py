@@ -108,11 +108,15 @@ _bearer = HTTPBearer(auto_error=False)
 
 
 def get_current_token(
+    request: Request,
     credentials: Annotated[
         HTTPAuthorizationCredentials | None, Depends(_bearer)
     ] = None,
 ) -> str:
     """Return the validated Bearer token or raise 401."""
+    cookie_token = request.cookies.get("auth_token")
+    if cookie_token is not None and _decode_token(cookie_token) is not None:
+        return cookie_token
     if credentials is None or _decode_token(credentials.credentials) is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -250,6 +254,13 @@ def auth_verify(
 
     session_token = _issue_token(user.id, user.first_name, user.username or "")
     response.delete_cookie("oauth_state")
+    response.set_cookie(
+        "auth_token",
+        session_token,
+        httponly=True,
+        samesite="lax",
+        max_age=60 * 60 * 24,
+    )
     return OAuthCallbackResponse(
         detail="Authenticated successfully.",
         state=state,

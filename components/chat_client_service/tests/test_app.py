@@ -101,6 +101,29 @@ def test_auth_full_flow_returns_access_token() -> None:
     assert body["token_type"] == "bearer"
 
 
+def test_auth_verify_sets_session_cookie_for_browser_flow() -> None:
+    """Successful verify stores an auth cookie usable by protected routes."""
+    mock = Mock()
+    mock.get_messages.return_value = [_message_dto()]
+    app.dependency_overrides[get_chat_client] = lambda: mock
+    try:
+        browser = TestClient(app, follow_redirects=False)
+        browser.get("/auth/login")
+        with patch(
+            "chat_client_service.routers.auth._verify_telegram_hash", return_value=True
+        ):
+            verify_response = browser.post("/auth/verify", json=_FAKE_USER)
+
+        assert verify_response.status_code == 200
+        assert "auth_token" in verify_response.cookies
+
+        messages_response = browser.get("/chat/messages?channel_id=ch-1")
+        assert messages_response.status_code == 200
+        assert messages_response.json()[0]["id"] == "m-1"
+    finally:
+        app.dependency_overrides.pop(get_chat_client, None)
+
+
 def test_auth_cookie_is_cleared_after_verify() -> None:
     """The CSRF cookie is deleted after a successful verify call."""
     client.get("/auth/login")
@@ -125,7 +148,8 @@ def test_auth_verify_rejects_invalid_hash() -> None:
 
 def test_auth_me_requires_valid_token() -> None:
     """GET /auth/me returns 401 without a valid Bearer token."""
-    response = client.get("/auth/me")
+    fresh = TestClient(app, follow_redirects=False)
+    response = fresh.get("/auth/me")
     assert response.status_code == 401
 
 

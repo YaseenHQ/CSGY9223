@@ -2,8 +2,8 @@ services:
   - type: web
     name: chat-client-service-botapi
     env: python
-    buildCommand: uv sync --all-extras
-    startCommand: uv run uvicorn chat_client_service.app:app --host 0.0.0.0 --port $PORT
+    buildCommand: python -m pip install --upgrade pip && python -m pip install -r requirements-render.txt
+    startCommand: python -m uvicorn chat_client_service.app:app --host 0.0.0.0 --port $PORT
     disk:
       name: chat-client-data
       mountPath: /var/data
@@ -11,13 +11,9 @@ services:
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
-      - key: TELEGRAM_OIDC_CLIENT_ID
-        sync: false
       - key: SERVICE_BASE_URL
         sync: false
       - key: TELEGRAM_WEBHOOK_SECRET
-        sync: false
-      - key: APP_SESSION_SECRET
         sync: false
       - key: APP_SESSION_TTL_SECONDS
         value: 3600

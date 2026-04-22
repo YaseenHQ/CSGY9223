@@ -6,8 +6,9 @@ Consumers create `/auth/sessions`, complete Telegram login, then call `/chat/*`
 with `X-Session-ID`. Direct Bearer tokens from `/auth/callback` are also
 accepted for compatibility.
 
-The service owner configures the Bot API token, BotFather Web Login Client ID,
-service base URL, webhook secret, app-session signing secret, and storage path.
-The OIDC client secret is only needed for `GET /auth/login?flow=code`; the
-default service-hosted login page does not use it. API consumers do not
+The service owner configures the Bot API token, service base URL, webhook
+secret, and storage path. The service derives the Telegram Login client id and
+default app-session signing secret from the bot token unless explicit overrides
+are set. The OIDC client secret is only needed for `GET /auth/login?flow=code`;
+the default service-hosted login page does not use it. API consumers do not
 configure Telegram credentials.

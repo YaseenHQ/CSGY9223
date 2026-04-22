@@ -3,7 +3,7 @@
 ## Prerequisites
 
 - Python 3.10 or higher
-- [uv](https://docs.astral.sh/uv/) package manager
+- [uv](https://docs.astral.sh/uv/) package manager for local development
 
 ## Installation
 
@@ -40,15 +40,16 @@ client = get_client(interactive=False)
 
 ## Running the Service
 
-Users of the hosted API do not set environment variables. They start at
-`/auth/login` and use the returned Bearer token on `/chat/*`.
+Users of the hosted API do not set environment variables. They create
+`/auth/sessions`, open the returned `login_url`, and use `X-Session-ID` on
+`/chat/*`.
 
 Only the service deployer sets Telegram credentials. The default Login library
-path requires the bot token and BotFather Web Login Client ID.
+path requires only the bot token; the service derives Telegram Login `client_id`
+from the bot token's numeric prefix.
 
 ```bash
 export TELEGRAM_BOT_TOKEN=...
-export TELEGRAM_OIDC_CLIENT_ID=...
 uv run uvicorn chat_client_service.app:app --host 127.0.0.1 --port 8000
 ```
 
@@ -56,7 +57,10 @@ Optional deployment settings:
 
 - `APP_SESSION_SECRET`: override for local Bearer token signing. Defaults to
   `TELEGRAM_BOT_TOKEN`.
-- `TELEGRAM_OIDC_CLIENT_SECRET`: required for `GET /auth/login` redirect flow.
+- `TELEGRAM_OIDC_CLIENT_ID`: optional override; defaults to the bot token's
+  numeric prefix.
+- `TELEGRAM_OIDC_CLIENT_SECRET`: required only for
+  `GET /auth/login?flow=code`.
 - `SERVICE_BASE_URL`: required for redirect flow and webhook setup.
 - `APP_SESSION_TTL_SECONDS`: local Bearer token lifetime, default `3600`.
 - `CHAT_CLIENT_STORE_PATH`: SQLite path, default `.data/chat_client.sqlite3`.
@@ -72,13 +76,11 @@ Optional deployment settings:
 
 1. Create a bot in [@BotFather](https://t.me/BotFather).
 2. In BotFather, open Bot Settings > Web Login.
-3. Add the origins where the Login library is embedded, for example
-   `https://example.com`.
+3. Add the origins where the Login library is embedded, for example your Render
+   origin `https://your-service.onrender.com`.
 4. Add redirect URIs such as `${SERVICE_BASE_URL}/auth/callback` if you also use
    the OIDC Authorization Code Flow.
-5. Save the Client ID into `TELEGRAM_OIDC_CLIENT_ID`. Save the Client Secret
-   only if you use `GET /auth/login`.
-6. Configure the webhook after deploy:
+5. Configure the webhook after deploy:
 
 ```bash
 uv run python scripts/configure_telegram_webhook.py
@@ -89,10 +91,39 @@ Telegram's current Login library and OIDC setup is documented in
 
 For a custom frontend using Telegram's Login library:
 
-1. Call `GET /auth/login/config`.
+1. Call `POST /auth/sessions`.
+2. Call `GET /auth/login/config?session_id=...`.
 2. Use the returned `client_id` and `nonce` in `Telegram.Login.init(...)`.
 3. Send the returned `id_token` and original `nonce` to `POST /auth/callback`.
-4. Use the service Bearer token response on `/chat/*`.
+4. Use `X-Session-ID` on `/chat/*`.
+
+## Render Deploy
+
+Render does not need `uv`. The blueprint installs the three local packages with
+`pip` and starts Uvicorn with Python:
+
+```text
+Build command:
+python -m pip install --upgrade pip && python -m pip install ./components/chat_client_api ./components/telegram_client_impl ./components/chat_client_service
+
+Start command:
+python -m uvicorn chat_client_service.app:app --host 0.0.0.0 --port $PORT
+```
+
+Set only these manual Render values:
+
+```env
+TELEGRAM_BOT_TOKEN=...
+SERVICE_BASE_URL=https://your-service.onrender.com
+TELEGRAM_WEBHOOK_SECRET=...
+```
+
+The blueprint sets:
+
+```env
+APP_SESSION_TTL_SECONDS=3600
+CHAT_CLIENT_STORE_PATH=/var/data/chat_client.sqlite3
+```
 
 For group tests, add the bot to the chat and configure the webhook so new
 messages reach `/telegram/webhook`. If the service has no cached grant for the

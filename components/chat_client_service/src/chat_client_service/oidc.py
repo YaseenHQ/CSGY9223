@@ -39,7 +39,8 @@ class OidcConfig:
         """Create config from environment variables."""
         bot_token = getenv("TELEGRAM_BOT_TOKEN")
         return cls(
-            client_id=getenv("TELEGRAM_OIDC_CLIENT_ID"),
+            client_id=getenv("TELEGRAM_OIDC_CLIENT_ID")
+            or _client_id_from_bot_token(bot_token),
             client_secret=getenv("TELEGRAM_OIDC_CLIENT_SECRET"),
             service_base_url=getenv("SERVICE_BASE_URL", "http://localhost:8000"),
             app_session_secret=getenv("APP_SESSION_SECRET") or bot_token,
@@ -304,5 +305,17 @@ def _require_oidc_config(config: OidcConfig) -> None:
 
 def _require_client_id(config: OidcConfig) -> None:
     if not config.client_id:
-        msg = "TELEGRAM_OIDC_CLIENT_ID is required"
+        msg = (
+            "TELEGRAM_BOT_TOKEN with numeric bot id or "
+            "TELEGRAM_OIDC_CLIENT_ID is required"
+        )
         raise ValueError(msg)
+
+
+def _client_id_from_bot_token(bot_token: str | None) -> str | None:
+    if not bot_token:
+        return None
+    bot_id, separator, _secret = bot_token.partition(":")
+    if not separator or not bot_id.isdecimal():
+        return None
+    return bot_id

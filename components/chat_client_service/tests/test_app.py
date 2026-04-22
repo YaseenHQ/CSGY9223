@@ -553,14 +553,28 @@ def test_begin_login_requires_oidc_config() -> None:
         app_session_secret="app-secret",
     )
 
-    with pytest.raises(ValueError, match="TELEGRAM_OIDC_CLIENT_ID"):
+    with pytest.raises(ValueError, match="TELEGRAM_BOT_TOKEN"):
         begin_login(config)
 
 
-def test_oidc_config_uses_explicit_login_client_id(
+def test_oidc_config_derives_login_client_id_from_bot_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Login library setup uses BotFather Client ID explicitly."""
+    """Telegram Login defaults to the bot token's numeric bot id."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:bot-secret")
+    monkeypatch.delenv("TELEGRAM_OIDC_CLIENT_ID", raising=False)
+    monkeypatch.delenv("APP_SESSION_SECRET", raising=False)
+
+    config = OidcConfig.from_env()
+
+    assert config.client_id == "123456"
+    assert config.app_session_secret == "123456:bot-secret"  # noqa: S105
+
+
+def test_oidc_config_allows_explicit_login_client_id_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit Telegram Login client id overrides bot token derivation."""
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:bot-secret")
     monkeypatch.setenv("TELEGRAM_OIDC_CLIENT_ID", "client-id")
     monkeypatch.delenv("APP_SESSION_SECRET", raising=False)
@@ -568,8 +582,7 @@ def test_oidc_config_uses_explicit_login_client_id(
     config = OidcConfig.from_env()
 
     assert config.client_id == "client-id"
-    expected_secret = "123456" + ":bot-secret"
-    assert config.app_session_secret == expected_secret
+    assert config.app_session_secret == "123456:bot-secret"  # noqa: S105
 
 
 def test_complete_login_exchanges_code_and_issues_token() -> None:

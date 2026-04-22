@@ -47,15 +47,15 @@ Authorization Code Flow is also available for OIDC-compatible clients:
 Required service-owned Render environment variables:
 
 - `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_OIDC_CLIENT_ID`
 - `SERVICE_BASE_URL`
 - `TELEGRAM_WEBHOOK_SECRET`
-- `APP_SESSION_SECRET`
 - `CHAT_CLIENT_STORE_PATH`
 
 Optional deployment settings:
 
+- `APP_SESSION_SECRET` (optional signing override; defaults to bot token)
 - `APP_SESSION_TTL_SECONDS` (optional)
+- `TELEGRAM_OIDC_CLIENT_ID` (optional override; defaults to bot token numeric id)
 - `TELEGRAM_OIDC_CLIENT_SECRET` (required only for `GET /auth/login?flow=code`)
 - `TELEGRAM_WEBHOOK_ALLOWED_UPDATES` (optional comma-separated update types)
 - `TELEGRAM_WEBHOOK_DROP_PENDING_UPDATES` (optional webhook setup flag)

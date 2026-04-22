@@ -61,23 +61,23 @@ tokens from `/auth/callback` are still accepted for compatibility.
 
 ## Service Configuration
 
-For Render, the shared service needs one service-owned bot and Web Login client.
-API users do not set Telegram credentials; they only log in through `/auth/*`.
+For Render, the shared service needs one service-owned bot. API users do not set
+Telegram credentials; they only log in through `/auth/*`.
 
 | Variable | Purpose |
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | Bot token from [@BotFather](https://t.me/BotFather), used for Bot API send/delete/webhook calls. |
-| `TELEGRAM_OIDC_CLIENT_ID` | Web Login Client ID from BotFather, passed to `Telegram.Login.init(...)` and used as the ID-token audience. |
 | `SERVICE_BASE_URL` | Render URL, e.g. `https://your-service.onrender.com`; used for login URLs and webhook setup. |
 | `TELEGRAM_WEBHOOK_SECRET` | Random webhook secret checked on `/telegram/webhook`. |
-| `APP_SESSION_SECRET` | Random secret for signing local API sessions. |
 | `CHAT_CLIENT_STORE_PATH` | SQLite store path. Use `/var/data/chat_client.sqlite3` on Render. |
 
 Optional deployment settings:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `APP_SESSION_SECRET` | `TELEGRAM_BOT_TOKEN` | Override for signing local API sessions. |
 | `APP_SESSION_TTL_SECONDS` | `3600` | Local Bearer token lifetime. |
+| `TELEGRAM_OIDC_CLIENT_ID` | bot token numeric prefix | Override only if BotFather displays a separate Web Login Client ID. |
 | `TELEGRAM_OIDC_CLIENT_SECRET` | unset | Required only for `GET /auth/login?flow=code`. The default login page does not use it. |
 | `TELEGRAM_WEBHOOK_ALLOWED_UPDATES` | `message,edited_message,channel_post,edited_channel_post,my_chat_member` | Comma-separated Bot API update types for webhook setup. |
 | `TELEGRAM_WEBHOOK_DROP_PENDING_UPDATES` | unset | Set to `true` to discard pending updates while configuring the webhook. |
@@ -90,6 +90,9 @@ project uses the current `Telegram.Login` library and OIDC ID-token validation.
 In BotFather Web Login settings, register the Render service origin
 (`https://your-service.onrender.com`). Register
 `${SERVICE_BASE_URL}/auth/callback` only if you enable `?flow=code`.
+If BotFather does not show a separate Client ID, leave
+`TELEGRAM_OIDC_CLIENT_ID` unset; the service uses the numeric bot id from the
+bot token as the Telegram Login client id.
 
 Primary session-first login path:
 
@@ -122,7 +125,6 @@ After deploy, configure Telegram to send updates to the service:
 
 ```bash
 export TELEGRAM_BOT_TOKEN=...
-export TELEGRAM_OIDC_CLIENT_ID=...
 export SERVICE_BASE_URL=https://your-service.example
 export TELEGRAM_WEBHOOK_SECRET=...
 uv run python scripts/configure_telegram_webhook.py

@@ -72,7 +72,7 @@ class OpenAIClient(AIClient):
         if text is None:
             msg = "OpenAI returned empty content"
             raise OpenAIClientError(msg)
-        return cast(str, text)
+        return cast("str", text)
 
 
 def _build_user_content(

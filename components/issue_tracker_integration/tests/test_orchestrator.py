@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, create_autospec
 
 from api.issue import Status
@@ -13,11 +13,11 @@ from issue_tracker_integration.orchestrator import IssueTrackerOrchestrator
 
 
 def _mock_ai() -> MagicMock:
-    return create_autospec(AIClient, instance=True)
+    return cast("MagicMock", create_autospec(AIClient, instance=True))
 
 
 def _mock_bridge() -> MagicMock:
-    return create_autospec(IssueTrackerBridge, instance=True)
+    return cast("MagicMock", create_autospec(IssueTrackerBridge, instance=True))
 
 
 def _mock_chat() -> MagicMock:

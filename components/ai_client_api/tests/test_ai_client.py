@@ -10,7 +10,7 @@ from ai_client_api import AIClient
 def test_ai_client_cannot_be_instantiated() -> None:
     """``AIClient`` is abstract and must be subclassed."""
     with pytest.raises(TypeError, match="abstract"):
-        AIClient()
+        AIClient()  # type: ignore[abstract]
 
 
 def test_concrete_subclass_must_implement_send_message() -> None:
@@ -20,7 +20,7 @@ def test_concrete_subclass_must_implement_send_message() -> None:
         """Stub missing ``send_message``."""
 
     with pytest.raises(TypeError, match="abstract"):
-        Incomplete()
+        Incomplete()  # type: ignore[abstract]
 
 
 def test_concrete_implementation() -> None:

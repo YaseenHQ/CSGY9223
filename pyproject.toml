@@ -11,6 +11,11 @@ authors = [
 dependencies = [
     "telegram-client-impl",
     "chat-client-api",
+    "python-dotenv>=1.1.0",
+    "watchtower>=3.3.1",
+    "issue-tracker-integration",
+    "ospd-issue-tracker-api",
+    "openai-client-impl",
 ]
 
 [project.optional-dependencies]
@@ -58,6 +63,9 @@ known-first-party = [
     "chat_client_service",
     "chat_client_service_api_client",
     "chat_client_adapter",
+    "issue_tracker_integration",
+    "ai_client_api",
+    "openai_client_impl",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -65,6 +73,7 @@ known-first-party = [
 "**/tests/**" = [
     "INP001",   # test directories intentionally omit __init__.py per assignment
     "ARG002",   # stub/mock implementations of ABCs have unused params by design
+    "D103",     # test functions don't require docstrings
     "PLC0415",  # deferred imports inside test functions used for isolation
     "PLR2004",  # allow magic values in test assertions
     "S105",     # "bearer" is OAuth token_type, not a password
@@ -79,6 +88,9 @@ testpaths = [
     "components/chat_client_service/tests",
     "components/chat_client_service_api_client/tests",
     "components/chat_client_adapter/tests",
+    "components/issue_tracker_integration/tests",
+    "components/ai_client_api/tests",
+    "components/openai_client_impl/tests",
 ]
 pythonpath = [
     ".",
@@ -86,6 +98,9 @@ pythonpath = [
     "components/chat_client_service/src",
     "components/chat_client_service_api_client/src",
     "components/chat_client_adapter/src",
+    "components/issue_tracker_integration/src",
+    "components/ai_client_api/src",
+    "components/openai_client_impl/src",
 ]
 markers = [
     "e2e: marks end-to-end tests that may require external credentials",
@@ -117,20 +132,48 @@ module = [
 ]
 disable_error_code = ["misc"]
 
+# ospd-issue-tracker-api ships without py.typed; bridge returns are typed via the ABC.
+[[tool.mypy.overrides]]
+module = "issue_tracker_integration.client"
+disable_error_code = ["no-any-return"]
+
+# Team 7 packages ship without py.typed; adapter return types come from our ABCs.
+[[tool.mypy.overrides]]
+module = [
+    "issue_tracker_client_api",
+    "issue_tracker_client_api.*",
+    "trello_client_impl",
+    "trello_client_impl.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "issue_tracker_integration.trello_adapter"
+disable_error_code = ["no-any-return", "misc"]
+
 [tool.uv.workspace]
 members = [
     "components/telegram_client_impl",
     "components/chat_client_service",
     "components/chat_client_service_api_client",
     "components/chat_client_adapter",
+    "components/issue_tracker_integration",
+    "components/ai_client_api",
+    "components/openai_client_impl",
 ]
 
 [tool.uv.sources]
 chat-client-api = { git = "https://github.com/HarshithKoriRaj/Shared-API.git" }
+ospd-issue-tracker-api = { git = "https://github.com/tatyanacthomas/ospd_issue_tracker.git" }
+issue-tracker-client-api = { git = "https://github.com/somadisingh/ospsd-team7-issue-tracker.git", subdirectory = "components/issue_tracker_client_api" }
+issue-tracker-client-impl = { git = "https://github.com/somadisingh/ospsd-team7-issue-tracker.git", subdirectory = "components/trello_client_impl" }
 telegram-client-impl = { workspace = true }
 chat-client-service = { workspace = true }
 chat-client-service-api-client = { workspace = true }
 chat-client-adapter = { workspace = true }
+issue-tracker-integration = { workspace = true }
+ai-client-api = { workspace = true }
+openai-client-impl = { workspace = true }
 
 [tool.coverage.run]
 source = ["components"]

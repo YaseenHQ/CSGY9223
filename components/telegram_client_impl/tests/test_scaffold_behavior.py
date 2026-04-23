@@ -4,21 +4,42 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from chat_client_api import Channel, Message
 from telegram_client_impl.client import TelegramClient, get_client_impl
 from telegram_client_impl.config import TelegramClientConfig
-from telegram_client_impl.errors import TelegramMappingError
+from telegram_client_impl.errors import (
+    TelegramAuthError,
+    TelegramClientError,
+    TelegramMappingError,
+)
 from telegram_client_impl.mappers import to_channel, to_message
 from telegram_client_impl.opaque_ids import (
     encode_telegram_message_id,
     parse_telegram_message_id,
 )
+from telegram_client_impl.telethon_async import run_coroutine
 
 EXPECTED_MESSAGE_COUNT = 2
+
+
+class _AsyncIter:
+    """Minimal async iterator for mocking ``iter_messages``."""
+
+    def __init__(self, items: list[object]) -> None:
+        self._it = iter(items)
+
+    def __aiter__(self) -> _AsyncIter:
+        return self
+
+    async def __anext__(self) -> object:
+        try:
+            return next(self._it)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
 
 
 def _client() -> TelegramClient:
@@ -42,29 +63,29 @@ def test_client_methods_delegate_to_telethon() -> None:
     ):
         # Arrange Telethon client on the instance.
         tele_client = MagicMock()
+        tele_client.delete_messages = AsyncMock()
         client._client = tele_client
+        target = object()
+        client._entity_cache["123"] = target
 
         # send_message
-        tele_client.send_message.return_value = object()
+        tele_client.send_message = AsyncMock(return_value=object())
         mock_msg = MagicMock(spec=Message)
         mock_to_message.return_value = mock_msg
         result = client.send_message(channel_id="123", text="hello")
         mock_ensure.assert_called()
-        tele_client.send_message.assert_called_with(123, "hello")
+        tele_client.send_message.assert_called_with(target, "hello")
         assert result is mock_msg
 
         # get_messages
-        tele_client.iter_messages.return_value = [
-            object(),
-            object(),
-        ]
+        tele_client.iter_messages.return_value = _AsyncIter([object(), object()])
         mock_to_message.reset_mock()
         messages = client.get_messages(
             channel_id="123",
             limit=EXPECTED_MESSAGE_COUNT,
         )
         tele_client.iter_messages.assert_called_with(
-            123,
+            target,
             limit=EXPECTED_MESSAGE_COUNT,
         )
         assert mock_to_message.call_count == EXPECTED_MESSAGE_COUNT
@@ -73,10 +94,10 @@ def test_client_methods_delegate_to_telethon() -> None:
         # delete_message
         tele_client.delete_messages.reset_mock()
         client.delete_message(message_id="123:5")
-        tele_client.delete_messages.assert_called_with(123, [5])
+        tele_client.delete_messages.assert_called_with(target, [5])
 
         # get_channels
-        tele_client.get_dialogs.return_value = [object()]
+        tele_client.get_dialogs = AsyncMock(return_value=[object()])
         mock_channel = MagicMock(spec=Channel)
         mock_to_channel.return_value = mock_channel
         channels = client.get_channels()
@@ -85,18 +106,95 @@ def test_client_methods_delegate_to_telethon() -> None:
         assert channels == [mock_channel]
 
         # get_channel
-        tele_client.get_entity.return_value = object()
+        client._entity_cache["99"] = object()
         mock_to_channel.return_value = mock_channel
         ch = client.get_channel("99")
-        tele_client.get_entity.assert_called_with(99)
         assert ch is mock_channel
 
         # get_message
-        tele_client.get_messages.return_value = object()
+        tele_client.get_messages = AsyncMock(return_value=object())
         mock_to_message.return_value = mock_msg
         msg = client.get_message("123:7")
-        tele_client.get_messages.assert_called_with(123, ids=7)
+        tele_client.get_messages.assert_called_with(target, ids=7)
         assert msg is mock_msg
+
+
+def test_client_resolves_dialog_entity_for_operations() -> None:
+    """Bare IDs from listed dialogs are resolved back to Telethon entities."""
+    client = _client()
+
+    with patch.object(client, "_ensure_connected"):
+        entity = SimpleNamespace(id=123, title="Test Group", broadcast=False)
+        dialog = SimpleNamespace(entity=entity)
+        tele_client = MagicMock()
+        tele_client.get_dialogs = AsyncMock(return_value=[dialog])
+        tele_client.send_message = AsyncMock(return_value=object())
+        client._client = tele_client
+
+        with patch("telegram_client_impl.client.to_message") as mock_to_message:
+            mock_msg = MagicMock(spec=Message)
+            mock_to_message.return_value = mock_msg
+
+            result = client.send_message(channel_id="123", text="hello")
+
+        tele_client.get_dialogs.assert_called_once()
+        tele_client.send_message.assert_called_once_with(entity, "hello")
+        assert result is mock_msg
+
+
+def test_bot_mode_send_does_not_require_dialog_listing() -> None:
+    """Bot-token fallback remains send-only and avoids GetDialogsRequest."""
+    client = _client()
+
+    with patch.object(client, "_ensure_connected"):
+        tele_client = MagicMock()
+        tele_client.get_dialogs = AsyncMock(side_effect=AssertionError)
+        tele_client.send_message = AsyncMock(return_value=object())
+        client._client = tele_client
+        client._bot_mode = True
+
+        with patch("telegram_client_impl.client.to_message") as mock_to_message:
+            mock_msg = MagicMock(spec=Message)
+            mock_to_message.return_value = mock_msg
+
+            result = client.send_message(channel_id="123", text="hello")
+
+        tele_client.get_dialogs.assert_not_called()
+        tele_client.send_message.assert_called_once_with(123, "hello")
+        assert result is mock_msg
+
+
+def test_bot_mode_read_operations_fail_with_clear_error() -> None:
+    """Read/list operations fail before Telethon bot-only API restrictions."""
+    client = _client()
+    client._bot_mode = True
+
+    with patch.object(client, "_ensure_connected"):
+        with pytest.raises(TelegramClientError, match="bot-token mode"):
+            client.get_channels()
+        with pytest.raises(TelegramClientError, match="bot-token mode"):
+            client.get_messages(channel_id="123")
+
+
+def test_invalid_session_string_does_not_fallback_to_bot() -> None:
+    """A configured user session must be valid; bot fallback is send-only mode."""
+    config = TelegramClientConfig(
+        api_id="1",
+        api_hash="hash",
+        bot_token="token",
+        session_string="invalid",
+    )
+    client = TelegramClient(config=config)
+    tele_client = MagicMock()
+    tele_client.is_connected.return_value = True
+    tele_client.is_user_authorized = AsyncMock(return_value=False)
+    tele_client.sign_in = AsyncMock()
+    client._client = tele_client
+
+    with pytest.raises(TelegramAuthError, match="TELEGRAM_SESSION_STRING"):
+        run_coroutine(client._async_start_session())
+
+    tele_client.sign_in.assert_not_called()
 
 
 def test_client_input_validation() -> None:
@@ -134,7 +232,8 @@ def test_get_channel_not_found_wraps_errors() -> None:
     """get_channel raises ValueError when get_entity fails."""
     client = _client()
     tele = MagicMock()
-    tele.get_entity.side_effect = OSError("network")
+    tele.get_dialogs = AsyncMock(return_value=[])
+    tele.get_entity = AsyncMock(side_effect=OSError("network"))
     with (
         patch.object(client, "_ensure_connected"),
         patch.object(client, "_get_client", return_value=tele),
@@ -147,6 +246,8 @@ def test_get_message_not_found_variants() -> None:
     """get_message raises ValueError when Telethon returns no message."""
     client = _client()
     tele = MagicMock()
+    target = object()
+    client._entity_cache["1"] = target
     with (
         patch.object(client, "_ensure_connected"),
         patch.object(
@@ -155,15 +256,15 @@ def test_get_message_not_found_variants() -> None:
             return_value=tele,
         ),
     ):
-        tele.get_messages.return_value = []
+        tele.get_messages = AsyncMock(return_value=[])
         with pytest.raises(ValueError, match="Message not found"):
             client.get_message("1:2")
 
-        tele.get_messages.return_value = None
+        tele.get_messages = AsyncMock(return_value=None)
         with pytest.raises(ValueError, match="Message not found"):
             client.get_message("1:2")
 
-        tele.get_messages.return_value = [None]
+        tele.get_messages = AsyncMock(return_value=[None])
         with pytest.raises(ValueError, match="Message not found"):
             client.get_message("1:2")
 
@@ -240,7 +341,8 @@ def test_delete_message_valueerror_on_rpc_error() -> None:
     """delete_message surfaces RPC failures as ValueError."""
     client = _client()
     tele = MagicMock()
-    tele.delete_messages.side_effect = OSError("denied")
+    tele.delete_messages = AsyncMock(side_effect=OSError("denied"))
+    client._entity_cache["1"] = object()
     with (
         patch.object(client, "_ensure_connected"),
         patch.object(client, "_get_client", return_value=tele),

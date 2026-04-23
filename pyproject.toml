@@ -11,6 +11,8 @@ authors = [
 dependencies = [
     "telegram-client-impl",
     "chat-client-api",
+    "python-dotenv>=1.1.0",
+    "watchtower>=3.3.1",
     "issue-tracker-integration",
     "ospd-issue-tracker-api",
     "openai-client-impl",

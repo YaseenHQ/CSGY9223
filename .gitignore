@@ -76,3 +76,7 @@ site/
 # Telethon session databases (may contain auth state)
 *.session
 
+# Terraform local state and provider cache
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.backup

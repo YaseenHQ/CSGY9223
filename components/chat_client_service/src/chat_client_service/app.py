@@ -4,8 +4,12 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from chat_client_service.config import load_environment
+from chat_client_service.middleware.telemetry import TelemetryMiddleware
 from chat_client_service.routers.auth import router as auth_router
 from chat_client_service.routers.chat import router as chat_router
+
+load_environment()
 
 
 class HealthResponse(BaseModel):
@@ -19,6 +23,7 @@ app = FastAPI(
     description="FastAPI service exposing Telegram chat operations over HTTP.",
     version="0.1.0",
 )
+app.add_middleware(TelemetryMiddleware)
 
 
 @app.exception_handler(Exception)

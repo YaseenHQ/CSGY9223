@@ -1,4 +1,6 @@
 uvicorn>=0.30.0
+python-dotenv>=1.1.0
+watchtower>=3.3.1
 chat-client-api @ git+https://github.com/HarshithKoriRaj/Shared-API.git
 -e ./components/telegram_client_impl
 -e ./components/chat_client_service

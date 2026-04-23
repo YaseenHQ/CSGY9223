@@ -20,6 +20,44 @@ uv run uvicorn chat_client_service.app:app --reload
 
 OpenAPI schema is available at `/openapi.json`.
 
+## CloudWatch Telemetry
+
+Request telemetry is emitted as structured EMF-style JSON.
+
+- By default, the service writes telemetry to the console.
+- If `CHAT_CLIENT_CLOUDWATCH_ENABLED=true`, the service sends the same events directly to AWS CloudWatch Logs.
+
+Telemetry environment variables:
+
+- `CHAT_CLIENT_CLOUDWATCH_ENABLED`: enable direct CloudWatch publishing when set to `true`
+- `CHAT_CLIENT_CLOUDWATCH_LOG_GROUP`: target log group name; defaults to `chat-client-service-logs`
+- `CHAT_CLIENT_CLOUDWATCH_STREAM_NAME`: optional explicit stream name
+- `CHAT_CLIENT_CLOUDWATCH_REGION`: optional region override; otherwise the service uses `AWS_REGION` or `AWS_DEFAULT_REGION`
+- `CHAT_CLIENT_CLOUDWATCH_USE_QUEUES`: optional; defaults to `false` for immediate local delivery
+- `CHAT_CLIENT_CLOUDWATCH_SEND_INTERVAL`: optional; defaults to `1`
+
+AWS credentials should come from standard AWS SDK environment variables, not from hardcoded code paths:
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_SESSION_TOKEN` if temporary credentials are being used
+- `AWS_REGION` or `AWS_DEFAULT_REGION`
+
+Where to set them:
+
+- local development: shell exports, `.env`, or your IDE run configuration
+- Render: the service environment variables page
+
+Example local setup:
+
+```bash
+export CHAT_CLIENT_CLOUDWATCH_ENABLED=true
+export CHAT_CLIENT_CLOUDWATCH_LOG_GROUP=chat-client-service-logs
+export AWS_DEFAULT_REGION=us-east-1
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+```
+
 ## Runtime Credentials
 
 Set these in Render or local `.env`:

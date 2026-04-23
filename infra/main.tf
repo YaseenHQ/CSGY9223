@@ -39,7 +39,14 @@ resource "aws_iam_policy" "telemetry_policy" {
   })
 }
 
-# 3. CloudWatch Dashboard for HW3 Deliverables
+# 3. Create the Log Group where EMF logs will be sent
+resource "aws_cloudwatch_log_group" "chat_service_logs" {
+  name              = "chat-client-service-logs"
+  retention_in_days = 7 
+}
+
+
+# 4. CloudWatch Dashboard for HW3 Deliverables
 resource "aws_cloudwatch_dashboard" "main" {
   dashboard_name = "OSPSD-HW3-ChatService"
 

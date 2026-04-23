@@ -1,6 +1,8 @@
 """Tests for chat_client_service FastAPI endpoints."""
 
+import os
 from collections.abc import Generator
+from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
 
@@ -10,6 +12,12 @@ from fastapi.testclient import TestClient
 
 from chat_client_api import Channel, Message
 from chat_client_service.app import app
+from chat_client_service.config import load_environment
+from chat_client_service.middleware.cloudwatch import (
+    _build_cloudwatch_handler,
+    load_cloudwatch_config,
+)
+from chat_client_service.middleware.telemetry import _build_request_metrics_event
 from chat_client_service.routers.auth import get_current_token
 from chat_client_service.routers.chat import get_chat_client
 
@@ -103,11 +111,16 @@ def test_unhandled_exception_still_emits_failure_telemetry() -> None:
 
     @router.get("/telemetry-boom")
     def telemetry_boom() -> None:
-        raise RuntimeError("boom")
+        message = "boom"
+        raise RuntimeError(message)
 
     app.include_router(router)
     try:
-        boom_client = TestClient(app, follow_redirects=False, raise_server_exceptions=False)
+        boom_client = TestClient(
+            app,
+            follow_redirects=False,
+            raise_server_exceptions=False,
+        )
         with patch(
             "chat_client_service.middleware.telemetry._publish_request_metrics"
         ) as publish_metrics:
@@ -121,6 +134,141 @@ def test_unhandled_exception_still_emits_failure_telemetry() -> None:
     assert kwargs["status_code"] == 500
     assert kwargs["success"] == 0
     assert kwargs["failure"] == 1
+
+
+def test_build_request_metrics_event_uses_emf_shape() -> None:
+    """Telemetry events keep the EMF structure CloudWatch metric extraction expects."""
+    event = _build_request_metrics_event(
+        service="chat_client_service",
+        endpoint="/health",
+        latency_ms=12.5,
+        status_code=200,
+        success=1,
+        failure=0,
+    )
+
+    assert event["Service"] == "chat_client_service"
+    assert event["Endpoint"] == "/health"
+    assert event["RequestLatency"] == 12.5
+    assert event["SuccessRate"] == 1
+    assert event["FailureRate"] == 0
+
+    metadata = event["_aws"]
+    assert metadata["CloudWatchMetrics"] == [
+        {
+            "Dimensions": [["Service", "Endpoint"]],
+            "Metrics": [
+                {"Name": "RequestLatency", "Unit": "Milliseconds"},
+                {"Name": "SuccessRate", "Unit": "Count"},
+                {"Name": "FailureRate", "Unit": "Count"},
+            ],
+            "Namespace": "OSPSD/HW3",
+        }
+    ]
+    assert isinstance(metadata["Timestamp"], int)
+
+
+def test_cloudwatch_config_defaults_to_console(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CloudWatch is disabled unless explicitly enabled by env var."""
+    monkeypatch.delenv("CHAT_CLIENT_CLOUDWATCH_ENABLED", raising=False)
+    monkeypatch.delenv("CHAT_CLIENT_CLOUDWATCH_LOG_GROUP", raising=False)
+    monkeypatch.delenv("CHAT_CLIENT_CLOUDWATCH_STREAM_NAME", raising=False)
+    monkeypatch.delenv("CHAT_CLIENT_CLOUDWATCH_REGION", raising=False)
+    monkeypatch.delenv("AWS_REGION", raising=False)
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+
+    config = load_cloudwatch_config()
+
+    assert config.enabled is False
+    assert config.log_group_name == "chat-client-service-logs"
+    assert config.region_name is None
+    assert config.stream_name is None
+
+
+def test_cloudwatch_config_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CloudWatch config should resolve the explicit toggle and region settings."""
+    monkeypatch.setenv("CHAT_CLIENT_CLOUDWATCH_ENABLED", "true")
+    monkeypatch.setenv("CHAT_CLIENT_CLOUDWATCH_LOG_GROUP", "chat-client-service-logs")
+    monkeypatch.setenv("CHAT_CLIENT_CLOUDWATCH_STREAM_NAME", "local-dev")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+
+    config = load_cloudwatch_config()
+
+    assert config.enabled is True
+    assert config.log_group_name == "chat-client-service-logs"
+    assert config.stream_name == "local-dev"
+    assert config.region_name == "us-east-1"
+    assert config.use_queues is False
+    assert config.send_interval == 1
+
+
+def test_build_cloudwatch_handler_disables_buffering_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Local CloudWatch publishing should not wait on the default 60s queue flush."""
+    monkeypatch.setenv("CHAT_CLIENT_CLOUDWATCH_ENABLED", "true")
+    monkeypatch.setenv("CHAT_CLIENT_CLOUDWATCH_LOG_GROUP", "chat-client-service-logs")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+
+    captured: dict[str, Any] = {}
+
+    class DummyClient:
+        pass
+
+    def fake_boto3_client(
+        service_name: str,
+        region_name: str | None = None,
+    ) -> DummyClient:
+        assert service_name == "logs"
+        assert region_name == "us-east-1"
+        return DummyClient()
+
+    class DummyHandler:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(
+        "chat_client_service.middleware.cloudwatch.boto3.client",
+        fake_boto3_client,
+    )
+    monkeypatch.setattr(
+        "chat_client_service.middleware.cloudwatch.watchtower.CloudWatchLogHandler",
+        DummyHandler,
+    )
+
+    handler = _build_cloudwatch_handler(load_cloudwatch_config())
+
+    assert isinstance(handler, DummyHandler)
+    assert captured["use_queues"] is False
+    assert captured["send_interval"] == 1
+
+
+def test_load_environment_reads_dotenv_without_overriding_existing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Local env loading should populate missing values but preserve exported ones."""
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        (
+            "CHAT_CLIENT_CLOUDWATCH_ENABLED=true\n"
+            "CHAT_CLIENT_CLOUDWATCH_LOG_GROUP=chat-client-service-logs\n"
+            "AWS_DEFAULT_REGION=us-east-1\n"
+            "AWS_ACCESS_KEY_ID=file-key\n"
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("CHAT_CLIENT_CLOUDWATCH_ENABLED", raising=False)
+    monkeypatch.delenv("CHAT_CLIENT_CLOUDWATCH_LOG_GROUP", raising=False)
+    monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "exported-key")
+
+    load_environment(env_file)
+
+    assert os.getenv("CHAT_CLIENT_CLOUDWATCH_ENABLED") == "true"
+    assert os.getenv("CHAT_CLIENT_CLOUDWATCH_LOG_GROUP") == "chat-client-service-logs"
+    assert os.getenv("AWS_DEFAULT_REGION") == "us-east-1"
+    assert os.getenv("AWS_ACCESS_KEY_ID") == "exported-key"
 
 
 # ---------------------------------------------------------------------------

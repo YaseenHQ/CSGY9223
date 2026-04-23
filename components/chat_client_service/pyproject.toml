@@ -6,10 +6,11 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115.0",
- "uvicorn>=0.30.0",
- "chat-client-api",
- "telegram-client-impl",
- "aws-embedded-metrics>=3.5.0",
+    "uvicorn>=0.30.0",
+    "chat-client-api",
+    "telegram-client-impl",
+    "python-dotenv>=1.1.0",
+    "watchtower>=3.3.1",
 ]
 
 [build-system]

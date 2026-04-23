@@ -1,14 +1,24 @@
 """Telemetry middleware for emitting AWS Embedded Metric Format metrics."""
 
-from time import perf_counter
+from __future__ import annotations
 
-from aws_embedded_metrics import metric_scope
-from fastapi import Request, Response
+import json
+from time import perf_counter, time
+from typing import TYPE_CHECKING
+
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from chat_client_service.middleware.cloudwatch import get_telemetry_logger
 
 _NAMESPACE = "OSPSD/HW3"
 _SERVICE = "chat_client_service"
 _FAILURE_STATUS_CODE = 500
+_FAILURE_STATUS_THRESHOLD = 400
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from fastapi import Request, Response
 
 
 def _endpoint_from_request(request: Request) -> str:
@@ -20,9 +30,41 @@ def _endpoint_from_request(request: Request) -> str:
     return request.url.path
 
 
-@metric_scope
-async def _publish_request_metrics(
-    metrics,
+def _build_request_metrics_event(  # noqa: PLR0913
+    *,
+    service: str,
+    endpoint: str,
+    latency_ms: float,
+    status_code: int,
+    success: int,
+    failure: int,
+) -> dict[str, object]:
+    """Build an EMF event for an HTTP request."""
+    return {
+        "Service": service,
+        "Endpoint": endpoint,
+        "StatusCode": status_code,
+        "RequestLatency": latency_ms,
+        "SuccessRate": success,
+        "FailureRate": failure,
+        "_aws": {
+            "Timestamp": int(time() * 1000),
+            "CloudWatchMetrics": [
+                {
+                    "Dimensions": [["Service", "Endpoint"]],
+                    "Metrics": [
+                        {"Name": "RequestLatency", "Unit": "Milliseconds"},
+                        {"Name": "SuccessRate", "Unit": "Count"},
+                        {"Name": "FailureRate", "Unit": "Count"},
+                    ],
+                    "Namespace": _NAMESPACE,
+                }
+            ],
+        },
+    }
+
+
+async def _publish_request_metrics(  # noqa: PLR0913
     *,
     service: str,
     endpoint: str,
@@ -32,18 +74,26 @@ async def _publish_request_metrics(
     failure: int,
 ) -> None:
     """Emit a single EMF event for an HTTP request."""
-    metrics.set_namespace(_NAMESPACE)
-    metrics.put_dimensions({"Service": service, "Endpoint": endpoint})
-    metrics.put_metric("RequestLatency", latency_ms, "Milliseconds")
-    metrics.put_metric("SuccessRate", success, "Count")
-    metrics.put_metric("FailureRate", failure, "Count")
-    await metrics.flush()
+    event = _build_request_metrics_event(
+        service=service,
+        endpoint=endpoint,
+        latency_ms=latency_ms,
+        status_code=status_code,
+        success=success,
+        failure=failure,
+    )
+    get_telemetry_logger().info(json.dumps(event))
 
 
 class TelemetryMiddleware(BaseHTTPMiddleware):
     """Emit EMF telemetry for every HTTP request."""
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Measure a request and emit telemetry for the response."""
         start = perf_counter()
 
         try:
@@ -61,7 +111,7 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
             raise
 
         latency_ms = (perf_counter() - start) * 1000
-        is_failure = int(response.status_code >= 400)
+        is_failure = int(response.status_code >= _FAILURE_STATUS_THRESHOLD)
         await _publish_request_metrics(
             service=_SERVICE,
             endpoint=_endpoint_from_request(request),

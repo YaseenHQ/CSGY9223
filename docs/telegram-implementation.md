@@ -64,6 +64,9 @@ Optional deployment settings:
 - `TELEGRAM_WEBHOOK_SECRET` (optional webhook hardening)
 - `TELEGRAM_WEBHOOK_ALLOWED_UPDATES` (optional comma-separated update types)
 - `TELEGRAM_WEBHOOK_DROP_PENDING_UPDATES` (optional webhook setup flag)
+- `TELEGRAM_UPDATE_MODE` (`polling` keeps ingesting messages while the server
+  runs; `webhook` relies on `/telegram/webhook`)
+- `TELEGRAM_POLL_INTERVAL_SECONDS` (optional polling interval)
 
 API consumers do not need Telegram API ID/hash values, user session strings, or
 their own service deployment.
@@ -75,7 +78,8 @@ Therefore:
 
 - `POST /chat/messages` sends through the service bot.
 - `GET /chat/messages` returns messages the bot observed, pulled while no
-  webhook is configured, or sent.
+  webhook is configured, or sent. Optional `cursor=<message_id>` returns newer
+  stored messages for incremental consumers.
 - `GET /chat/messages/{message_id}` returns one observed or sent message by
   opaque id.
 - `GET /chat/channels` returns chats known to the bot.
@@ -83,8 +87,10 @@ Therefore:
 - `DELETE /chat/messages/{message_id}` works when Telegram allows the bot to
   delete that message.
 
-The webhook is the production path that makes reads work. Configure it after
-deploy:
+The simplest Render path is `TELEGRAM_UPDATE_MODE=polling`, which starts a
+background Bot API long poller while the server is running and stores updates in
+`CHAT_CLIENT_STORE_PATH`. Webhook deployment is also supported. Configure it
+after deploy:
 
 ```bash
 uv run python scripts/configure_telegram_webhook.py
@@ -99,12 +105,12 @@ with any group or channel used for testing. `channel_id=me` targets the
 logged-in user's direct chat with the bot.
 
 Telegram stores undelivered updates for at most 24 hours, and `getUpdates` and
-webhooks are mutually exclusive. When no webhook is configured, read endpoints
-attempt a short `getUpdates` poll before reading the local store. Once a webhook
-is active, Telegram will not allow polling, so delivery depends on the webhook
-URL and optional secret being correct. The webhook setup script registers
-explicit `allowed_updates` so Telegram sends the update types this service
-records: `message`, `edited_message`, `channel_post`, `edited_channel_post`, and
+webhooks are mutually exclusive. When no webhook is configured, polling mode and
+read endpoints use `getUpdates` before reading the local store. Once a webhook is
+active, Telegram will not allow polling, so delivery depends on the webhook URL
+and optional secret being correct. The webhook setup script registers explicit
+`allowed_updates` so Telegram sends the update types this service records:
+`message`, `edited_message`, `channel_post`, `edited_channel_post`, and
 `my_chat_member`.
 
 `DELETE /chat/messages/{message_id}` calls Bot API `deleteMessage`; Telegram can

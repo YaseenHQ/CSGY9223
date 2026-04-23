@@ -69,6 +69,7 @@ Telegram credentials; they only log in through `/auth/*`.
 | `TELEGRAM_BOT_TOKEN` | Bot token from [@BotFather](https://t.me/BotFather), used for Bot API send/delete/webhook calls. |
 | `SERVICE_BASE_URL` | Render URL, e.g. `https://your-service.onrender.com`; used for login URLs and webhook setup. |
 | `CHAT_CLIENT_STORE_PATH` | SQLite store path. Use `/var/data/chat_client.sqlite3` on Render. |
+| `TELEGRAM_UPDATE_MODE` | Use `polling` to keep ingesting messages while the server is running without webhook setup. Use `webhook` when Telegram is configured to POST updates to `/telegram/webhook`. |
 
 Optional deployment settings:
 
@@ -82,6 +83,7 @@ Optional deployment settings:
 | `TELEGRAM_WEBHOOK_ALLOWED_UPDATES` | `message,edited_message,channel_post,edited_channel_post,my_chat_member` | Comma-separated Bot API update types for webhook setup. |
 | `TELEGRAM_WEBHOOK_DROP_PENDING_UPDATES` | unset | Set to `true` to discard pending updates while configuring the webhook. |
 | `TELEGRAM_BOT_API_BASE_URL` | `https://api.telegram.org` | Override only for a custom Bot API server. |
+| `TELEGRAM_POLL_INTERVAL_SECONDS` | `3` | Polling interval when `TELEGRAM_UPDATE_MODE=polling`. |
 
 Telegram documents the Login library and OIDC setup in
 [Log In With Telegram](https://core.telegram.org/bots/telegram-login).
@@ -109,22 +111,30 @@ Custom frontends can instead call `GET /auth/login/config?session_id=...`, pass
 callback `id_token` and the same `nonce` to
    `POST /auth/callback`.
 
-Manual clients may also use the returned Bearer token directly on `/chat/*`.
+Browser clients can use the HTTP-only login cookie set by the callback. Manual
+clients may use `X-Session-ID` or the returned Bearer token directly on
+`/chat/*`. Logout deletes the cookie/`X-Session-ID` session; direct Bearer
+tokens remain valid until `APP_SESSION_TTL_SECONDS` expires.
 
 OIDC-compatible clients can force the standards-based path with
 `GET /auth/login?flow=code`, which performs Authorization Code Flow with PKCE.
 
 Chat endpoints are bot-scoped: sends/deletes use the official Bot API, and reads
-return messages the bot observed through webhooks, pulled with `getUpdates` when
-no webhook is configured, or sent through the service.
+return messages the bot observed through webhooks, pulled with background
+`getUpdates` polling while the server is running, or sent through the service.
 Message responses return opaque ids in `channel_id:message_id` form; pass that
-id to `DELETE /chat/messages/{message_id}`.
+id to `DELETE /chat/messages/{message_id}`. For incremental consumers, pass the
+last processed id as `cursor` to `GET /chat/messages` to return newer stored
+messages only.
 If a user has no cached chat grant yet, the service verifies membership with
 Bot API `getChatMember` before allowing `/chat/*` access. Telegram only
 guarantees `getChatMember` for other users when the bot is an administrator in
 that chat.
 
-After deploy, configure Telegram to send updates to the service:
+For the simplest Render setup, keep `TELEGRAM_UPDATE_MODE=polling`; the web
+process continuously pulls Bot API updates with Telegram long polling while it
+is running. For webhook deployment instead, set `TELEGRAM_UPDATE_MODE=webhook`
+and configure Telegram to send updates to the service:
 
 ```bash
 export TELEGRAM_BOT_TOKEN=...
@@ -138,9 +148,9 @@ so Telegram delivers new messages to `/telegram/webhook`. Replace
 present. `me` means the logged-in user's direct chat with the bot.
 If `TELEGRAM_WEBHOOK_SECRET` is set, the webhook rejects requests unless
 Telegram sends the matching secret header.
-If no webhook is configured, read endpoints attempt a short `getUpdates` poll
-before reading the local store. Telegram keeps undelivered updates for at most
-24 hours, and `getUpdates` cannot be used while a webhook is configured.
+If no webhook is configured, read endpoints also attempt a short `getUpdates`
+poll before reading the local store. Telegram keeps undelivered updates for at
+most 24 hours, and `getUpdates` cannot be used while a webhook is configured.
 
 ## Documentation
 

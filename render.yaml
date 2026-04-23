@@ -17,3 +17,7 @@ services:
         value: 3600
       - key: CHAT_CLIENT_STORE_PATH
         value: /var/data/chat_client.sqlite3
+      - key: TELEGRAM_UPDATE_MODE
+        value: polling
+      - key: TELEGRAM_POLL_INTERVAL_SECONDS
+        value: 3

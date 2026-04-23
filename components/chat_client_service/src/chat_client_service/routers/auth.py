@@ -6,7 +6,16 @@ import time
 from typing import Annotated
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    Cookie,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Response,
+    status,
+)
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -33,6 +42,7 @@ from telegram_client_impl.store import StoredChannel, get_store
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _bearer = HTTPBearer(auto_error=False)
+_APP_SESSION_COOKIE = "chat_client_session"
 
 
 def get_oidc_config() -> OidcConfig:
@@ -47,12 +57,17 @@ def get_current_claims(
     ],
     config: Annotated[OidcConfig, Depends(get_oidc_config)],
     x_session_id: Annotated[str | None, Header(alias="X-Session-ID")] = None,
+    chat_client_session: Annotated[
+        str | None,
+        Cookie(alias=_APP_SESSION_COOKIE),
+    ] = None,
 ) -> dict[str, str]:
     """Return validated local session claims or raise 401."""
     token: str | None = None
     if credentials is None:
-        if x_session_id is not None:
-            token = get_store().token_for_session(session_id=x_session_id)
+        session_id = x_session_id or chat_client_session
+        if session_id is not None:
+            token = get_store().token_for_session(session_id=session_id)
     else:
         token = credentials.credentials
     if token is None:
@@ -60,6 +75,8 @@ def get_current_claims(
 
     claims = decode_app_token(config=config, token=token)
     if claims is None:
+        raise _unauthorized()
+    if not claims.get("telegram_id"):
         raise _unauthorized()
     return claims
 
@@ -218,6 +235,7 @@ def auth_login_config(
 def auth_callback(
     code: str,
     state: str,
+    response: Response,
     config: Annotated[OidcConfig, Depends(get_oidc_config)],
 ) -> TokenResponse:
     """Complete Telegram OIDC login and issue a local Bearer token."""
@@ -228,12 +246,18 @@ def auth_callback(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-    return _issue_token_response(config=config, token=token, session_id=session_id)
+    return _issue_token_response(
+        config=config,
+        token=token,
+        response=response,
+        session_id=session_id,
+    )
 
 
 @router.post("/callback")
 def auth_login_library_callback(
     request: TelegramLoginCallbackRequest,
+    response: Response,
     config: Annotated[OidcConfig, Depends(get_oidc_config)],
 ) -> TokenResponse:
     """Complete Telegram.Login JavaScript id_token callback."""
@@ -248,12 +272,18 @@ def auth_login_library_callback(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-    return _issue_token_response(config=config, token=token, session_id=session_id)
+    return _issue_token_response(
+        config=config,
+        token=token,
+        response=response,
+        session_id=session_id,
+    )
 
 
 @router.post("/telegram-login")
 def auth_telegram_hash_callback(
     request: TelegramHashLoginCallbackRequest,
+    response: Response,
     config: Annotated[OidcConfig, Depends(get_oidc_config)],
     telegram_auth_state: Annotated[str | None, Cookie()] = None,
     telegram_auth_session_id: Annotated[str | None, Cookie()] = None,
@@ -271,7 +301,12 @@ def auth_telegram_hash_callback(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-    return _issue_token_response(config=config, token=token, session_id=session_id)
+    return _issue_token_response(
+        config=config,
+        token=token,
+        response=response,
+        session_id=session_id,
+    )
 
 
 ClaimsDependency = Annotated[dict[str, str], Depends(get_current_claims)]
@@ -313,9 +348,14 @@ def get_auth_session(
 
 
 @router.delete("/sessions/{session_id}")
-def delete_auth_session(session_id: str) -> LogoutResponse:
+def delete_auth_session(
+    session_id: str,
+    response: Response,
+    config: Annotated[OidcConfig, Depends(get_oidc_config)],
+) -> LogoutResponse:
     """Delete a service auth session."""
     get_store().delete_auth_session(session_id=session_id)
+    _clear_app_session_cookie(response=response, config=config)
     return LogoutResponse(success=True)
 
 
@@ -331,18 +371,58 @@ def _issue_token_response(
     *,
     config: OidcConfig,
     token: str,
+    response: Response,
     session_id: str | None = None,
 ) -> TokenResponse:
     claims = decode_app_token(config=config, token=token)
     if claims is not None:
         _grant_self_chat_access(claims)
-        if session_id is not None:
-            get_store().authenticate_session(
+        session_id = session_id or secrets.token_urlsafe(24)
+        if get_store().get_auth_session(session_id=session_id) is None:
+            get_store().create_auth_session(
                 session_id=session_id,
-                token=token,
-                claims=claims,
+                created_at=int(time.time()),
             )
+        get_store().authenticate_session(
+            session_id=session_id,
+            token=token,
+            claims=claims,
+        )
+        _set_app_session_cookie(
+            response=response,
+            config=config,
+            session_id=session_id,
+        )
     return TokenResponse(access_token=token)
+
+
+def _set_app_session_cookie(
+    *,
+    response: Response,
+    config: OidcConfig,
+    session_id: str,
+) -> None:
+    response.set_cookie(
+        _APP_SESSION_COOKIE,
+        session_id,
+        httponly=True,
+        max_age=config.app_session_ttl_seconds,
+        samesite="lax",
+        secure=config.service_base_url.startswith("https://"),
+    )
+
+
+def _clear_app_session_cookie(
+    *,
+    response: Response,
+    config: OidcConfig,
+) -> None:
+    response.delete_cookie(
+        _APP_SESSION_COOKIE,
+        httponly=True,
+        samesite="lax",
+        secure=config.service_base_url.startswith("https://"),
+    )
 
 
 def _grant_self_chat_access(claims: dict[str, str]) -> None:
@@ -544,7 +624,7 @@ def _login_page_html(
         state,
         session_id: sessionId,
       }}).then((completed) => {{
-        if (completed && window.opener) {{
+        if (completed && window.name === "telegram_auth_popup") {{
           window.close();
         }}
       }});
@@ -565,6 +645,7 @@ def _login_page_html(
           authUrl.searchParams.set("origin", origin);
           authUrl.searchParams.set("redirect_uri", origin + "/");
           url = authUrl.toString();
+          target = "telegram_auth_popup";
         }}
         return openPopup.call(window, url, target, features);
       }};

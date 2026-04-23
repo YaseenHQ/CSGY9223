@@ -204,19 +204,37 @@ class BotUpdateStore:
         *,
         channel_id: str,
         max_results: int,
+        cursor: str | None = None,
     ) -> list[TelegramMessage]:
         """Return recent messages for a known bot chat."""
+        cursor_channel_id, cursor_message_id = _split_message_id(cursor or "")
+        if cursor_channel_id is not None and cursor_channel_id != channel_id:
+            return []
+
         with self._lock:
-            rows = self._conn.execute(
-                """
-                SELECT message_id, sender, channel_id, timestamp, text
-                FROM messages
-                WHERE channel_id = ?
-                ORDER BY stored_at DESC, CAST(message_id AS INTEGER) DESC
-                LIMIT ?
-                """,
-                (channel_id, max_results),
-            ).fetchall()
+            if cursor_message_id:
+                rows = self._conn.execute(
+                    """
+                    SELECT message_id, sender, channel_id, timestamp, text
+                    FROM messages
+                    WHERE channel_id = ?
+                      AND CAST(message_id AS INTEGER) > CAST(? AS INTEGER)
+                    ORDER BY CAST(message_id AS INTEGER), stored_at
+                    LIMIT ?
+                    """,
+                    (channel_id, cursor_message_id, max_results),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    """
+                    SELECT message_id, sender, channel_id, timestamp, text
+                    FROM messages
+                    WHERE channel_id = ?
+                    ORDER BY stored_at DESC, CAST(message_id AS INTEGER) DESC
+                    LIMIT ?
+                    """,
+                    (channel_id, max_results),
+                ).fetchall()
         return [_message_from_row(row) for row in rows]
 
     def get_message(self, *, message_id: str) -> TelegramMessage | None:
@@ -280,6 +298,16 @@ class BotUpdateStore:
                 VALUES (?, ?)
                 """,
                 (telegram_id, channel_id),
+            )
+
+    def revoke_channel_access(self, *, channel_id: str) -> None:
+        """Remove cached user access for a chat the bot left."""
+        if not channel_id:
+            return
+        with self._lock, self._conn:
+            self._conn.execute(
+                "DELETE FROM chat_access WHERE channel_id = ?",
+                (channel_id,),
             )
 
     def user_can_access(self, *, telegram_id: str, channel_id: str) -> bool:
@@ -529,10 +557,11 @@ def record_update(update: dict[str, object]) -> StoredMessage | None:
 def record_chat_member_update(raw_update: dict[str, object]) -> None:
     """Record a chat surfaced by a bot membership update."""
     new_member = _as_dict(raw_update.get("new_chat_member"))
+    chat = _as_dict(raw_update.get("chat"))
     if new_member.get("status") in {"left", "kicked"}:
+        get_store().revoke_channel_access(channel_id=str(chat.get("id") or ""))
         return
 
-    chat = _as_dict(raw_update.get("chat"))
     if not chat:
         return
 

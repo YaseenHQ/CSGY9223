@@ -44,7 +44,8 @@ telegram_client_impl.record_update(update_payload)
 
 If no webhook is configured for the bot, reads make one short `getUpdates` poll
 before returning local state. Telegram disables `getUpdates` while a webhook is
-active, so deployed services should still use webhooks for reliable delivery.
+active, so deployments should choose one update mode and store updates durably.
+A host service can also run background long polling while the server is open.
 
 ## Environment Variables
 
@@ -53,6 +54,8 @@ The implementation reads:
 - `TELEGRAM_BOT_TOKEN`
 - `CHAT_CLIENT_STORE_PATH` (optional, defaults to `.data/chat_client.sqlite3`)
 - `TELEGRAM_BOT_API_BASE_URL` (optional, defaults to `https://api.telegram.org`)
+- `TELEGRAM_UPDATE_MODE=polling` (host service option for continuous ingestion)
+- `TELEGRAM_POLL_INTERVAL_SECONDS` (optional polling interval)
 
 The hosted service also uses Telegram OIDC variables documented in the root
 README. API consumers should not configure Telegram API ID/hash values, user
@@ -61,7 +64,8 @@ session strings, or their own service.
 ## Runtime Behavior
 
 Reads and channel lists are based on bot-observed state, not arbitrary Telegram
-user history. Telegram keeps undelivered updates for at most 24 hours.
+user history. `get_messages(..., cursor=...)` returns messages newer than the
+cursor id. Telegram keeps undelivered updates for at most 24 hours.
 
 Deletion uses Bot API `deleteMessage` and may fail when Telegram rejects it
 because of message age, service-message limits, chat type, or missing bot

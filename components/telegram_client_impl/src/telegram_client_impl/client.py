@@ -1,5 +1,7 @@
 """Telegram Bot API implementation for the chat_client_api.Client contract."""
 
+import logging
+import os
 from typing import Any
 
 import httpx
@@ -11,6 +13,7 @@ from telegram_client_impl.store import get_store, record_bot_api_message, record
 
 MAX_TEXT_LENGTH = 4096
 TELEGRAM_CONFLICT_ERROR_CODE = 409
+BACKGROUND_POLL_TIMEOUT_SECONDS = 3
 POLLING_OFFSET_STATE_KEY = "telegram_get_updates_offset"
 POLLING_ALLOWED_UPDATES = [
     "message",
@@ -19,6 +22,7 @@ POLLING_ALLOWED_UPDATES = [
     "edited_channel_post",
     "my_chat_member",
 ]
+LOGGER = logging.getLogger(__name__)
 
 
 class TelegramClient(ChatClient):
@@ -64,7 +68,6 @@ class TelegramClient(ChatClient):
         max_results: int | None = None,
     ) -> list[Message]:
         """Retrieve bot-observed messages from a Telegram chat."""
-        del cursor
         _require_non_empty(value=channel_id, name="channel_id")
         requested_limit = max_results if max_results is not None else limit
         if requested_limit <= 0:
@@ -76,6 +79,7 @@ class TelegramClient(ChatClient):
         messages = get_store().list_messages(
             channel_id=channel_id,
             max_results=requested_limit,
+            cursor=cursor,
         )
         return list(messages)
 
@@ -191,15 +195,19 @@ class TelegramClient(ChatClient):
             )
         return payload
 
-    def _sync_updates_from_polling(self) -> None:
+    def _sync_updates_from_polling(self, *, force: bool = False) -> None:
         """Pull pending updates when this bot is not configured for webhooks."""
         if self._polling_checked:
+            return
+        if _background_polling_enabled() and not force:
+            self._polling_checked = True
             return
         self._polling_checked = True
 
         try:
             webhook_configured = self._webhook_is_configured()
-        except TelegramClientError:
+        except TelegramClientError as exc:
+            LOGGER.warning("Telegram getWebhookInfo failed: %s", exc)
             return
         if webhook_configured:
             return
@@ -207,14 +215,24 @@ class TelegramClient(ChatClient):
         try:
             updates_payload = self._request(
                 "getUpdates",
-                json=self._polling_request_payload(),
+                json=self._polling_request_payload(
+                    timeout_seconds=BACKGROUND_POLL_TIMEOUT_SECONDS if force else 0,
+                ),
             )
         except TelegramClientError as exc:
             if exc.error_code == TELEGRAM_CONFLICT_ERROR_CODE:
+                LOGGER.debug("Telegram getUpdates skipped: another poller is active")
                 return
+            LOGGER.warning("Telegram getUpdates failed: %s", exc)
             return
 
         self._record_polled_updates(updates_payload.get("result"))
+
+    def sync_updates(self, *, force: bool = False) -> None:
+        """Synchronize pending Bot API updates when polling is available."""
+        if force:
+            self._polling_checked = False
+        self._sync_updates_from_polling(force=force)
 
     def _webhook_is_configured(self) -> bool:
         """Return whether Telegram reports an active webhook URL."""
@@ -222,12 +240,14 @@ class TelegramClient(ChatClient):
         result = _as_dict(webhook_info.get("result"))
         return bool(result.get("url"))
 
-    def _polling_request_payload(self) -> dict[str, object]:
+    def _polling_request_payload(
+        self, *, timeout_seconds: int = 0
+    ) -> dict[str, object]:
         """Build the getUpdates request from the persisted offset."""
         offset = get_store().get_int_state(key=POLLING_OFFSET_STATE_KEY)
         payload: dict[str, object] = {
             "limit": 100,
-            "timeout": 0,
+            "timeout": timeout_seconds,
             "allowed_updates": POLLING_ALLOWED_UPDATES,
         }
         if offset is not None:
@@ -291,6 +311,10 @@ def _as_dict(value: object) -> dict[str, object]:
 
 def _as_int(value: object) -> int | None:
     return value if isinstance(value, int) else None
+
+
+def _background_polling_enabled() -> bool:
+    return os.getenv("TELEGRAM_UPDATE_MODE", "webhook").strip().lower() == "polling"
 
 
 def _resolve_message_reference(

@@ -1,15 +1,39 @@
 """FastAPI application for Telegram OIDC and Bot API chat operations."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from chat_client_service.models import HealthResponse
 from chat_client_service.routers import auth, chat, telegram
+from chat_client_service.update_poller import (
+    TelegramUpdatePoller,
+    poll_interval_seconds,
+    should_start_update_poller,
+)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Start optional background services for the FastAPI app."""
+    poller: TelegramUpdatePoller | None = None
+    if should_start_update_poller():
+        poller = TelegramUpdatePoller(interval_seconds=poll_interval_seconds())
+        poller.start()
+    try:
+        yield
+    finally:
+        if poller is not None:
+            poller.stop()
+
 
 app = FastAPI(
     title="Chat Client Service",
     description="Telegram OIDC login with bot-scoped chat operations.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.include_router(auth.router)
@@ -61,6 +85,9 @@ def root() -> HTMLResponse:
         localStorage.removeItem("telegram_auth_session_id");
         statusBox.textContent = "Login complete. Return to your API client.";
         window.history.replaceState(null, "", "/");
+        if (window.name === "telegram_auth_popup") {
+          window.close();
+        }
       });
     }
   </script>

@@ -285,7 +285,10 @@ def issue_app_token(*, config: OidcConfig, claims: dict[str, Any]) -> str:
         msg = "APP_SESSION_SECRET is required"
         raise ValueError(msg)
     now = int(time.time())
-    telegram_id = claims.get("id") or claims.get("sub", "")
+    telegram_id = claims.get("id") or claims.get("sub")
+    if not telegram_id:
+        msg = "Telegram user id is required"
+        raise ValueError(msg)
     body = {
         "telegram_id": str(telegram_id),
         "telegram_sub": str(claims.get("sub", "")),
@@ -314,7 +317,7 @@ def decode_app_token(*, config: OidcConfig, token: str) -> dict[str, str] | None
         )
     except (binascii.Error, json.JSONDecodeError, TypeError, ValueError):
         return None
-    return {str(key): str(value) for key, value in decoded.items()}
+    return {str(key): str(value) for key, value in decoded.items() if value is not None}
 
 
 def _decode_signed_token_body(*, secret: str, token: str) -> dict[str, Any]:

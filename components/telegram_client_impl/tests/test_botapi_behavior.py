@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -206,6 +207,35 @@ def test_webhook_update_records_message_for_reads() -> None:
     assert channels[0].id == "123"
 
 
+def test_get_messages_cursor_returns_newer_messages() -> None:
+    """Cursor reads let consumers process only newly observed messages."""
+    client = _client(
+        httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={"ok": True, "result": {"url": "https://example.com/hook"}},
+                request=request,
+            )
+        )
+    )
+
+    for message_id in (8, 9, 10):
+        record_update(
+            {
+                "update_id": message_id,
+                "message": _raw_message(
+                    message_id=message_id,
+                    text=f"seen {message_id}",
+                ),
+            }
+        )
+
+    messages = client.get_messages("123", limit=10, cursor="123:8")
+
+    assert [message.id for message in messages] == ["9", "10"]
+    assert [message.text for message in messages] == ["seen 9", "seen 10"]
+
+
 def test_client_polls_updates_when_webhook_is_not_configured() -> None:
     """Reads can ingest pending Bot API updates when no webhook is active."""
     requests: list[httpx.Request] = []
@@ -245,6 +275,97 @@ def test_client_polls_updates_when_webhook_is_not_configured() -> None:
         "getWebhookInfo",
         "getUpdates",
     ]
+    get_updates = requests[1]
+    assert json.loads(get_updates.content)["timeout"] == 0
+
+
+def test_client_skips_read_polling_when_background_poller_is_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Request-time reads do not race the service background poller."""
+    monkeypatch.setenv("TELEGRAM_UPDATE_MODE", "polling")
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500, json={"ok": False}, request=request)
+
+    client = _client(httpx.MockTransport(handler))
+
+    assert client.get_channels() == []
+    assert requests == []
+
+
+def test_forced_polling_still_fetches_updates_when_poller_is_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The background poller uses force=True to perform the actual getUpdates call."""
+    monkeypatch.setenv("TELEGRAM_UPDATE_MODE", "polling")
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/getWebhookInfo"):
+            return httpx.Response(
+                200,
+                json={"ok": True, "result": {"url": ""}},
+                request=request,
+            )
+        if request.url.path.endswith("/getUpdates"):
+            return httpx.Response(
+                200,
+                json={
+                    "ok": True,
+                    "result": [
+                        {
+                            "update_id": 11,
+                            "message": _raw_message(message_id=9, text="polled"),
+                        }
+                    ],
+                },
+                request=request,
+            )
+        return httpx.Response(404, json={"ok": False}, request=request)
+
+    client = _client(httpx.MockTransport(handler))
+
+    client.sync_updates(force=True)
+
+    assert get_store().list_messages(channel_id="123", max_results=1)[0].text == (
+        "polled"
+    )
+    assert [request.url.path.rsplit("/", 1)[-1] for request in requests] == [
+        "getWebhookInfo",
+        "getUpdates",
+    ]
+    get_updates = requests[1]
+    assert json.loads(get_updates.content)["timeout"] == 3
+
+
+def test_polling_errors_are_logged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Polling failures are visible instead of being silently dropped."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/getWebhookInfo"):
+            return httpx.Response(
+                200,
+                json={"ok": True, "result": {"url": ""}},
+                request=request,
+            )
+        return httpx.Response(
+            429,
+            json={"ok": False, "error_code": 429, "description": "Too Many Requests"},
+            request=request,
+        )
+
+    caplog.set_level(logging.WARNING, logger="telegram_client_impl.client")
+    client = _client(httpx.MockTransport(handler))
+
+    assert client.get_channels() == []
+
+    assert "Telegram getUpdates failed" in caplog.text
 
 
 def test_webhook_records_edited_channel_post_sender_chat() -> None:
@@ -289,6 +410,26 @@ def test_webhook_records_bot_membership_chat() -> None:
     assert channels[0].id == "-123"
     assert channels[0].name == "OSSHWBOTTEST"
     assert get_store().user_can_access(telegram_id="100", channel_id="-123") is True
+
+
+def test_bot_membership_removal_revokes_cached_chat_access() -> None:
+    """When the bot leaves a chat, cached access to that chat is removed."""
+    get_store().grant_access(telegram_id="100", channel_id="-123")
+
+    record_update(
+        {
+            "update_id": 1,
+            "my_chat_member": {
+                "from": {"id": 100},
+                "chat": {"id": -123, "title": "OSSHWBOTTEST", "type": "group"},
+                "date": 1_800_000_000,
+                "old_chat_member": {"status": "member"},
+                "new_chat_member": {"status": "kicked"},
+            },
+        }
+    )
+
+    assert get_store().user_can_access(telegram_id="100", channel_id="-123") is False
 
 
 def test_client_can_check_membership_with_bot_api() -> None:

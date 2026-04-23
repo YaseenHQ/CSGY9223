@@ -24,6 +24,11 @@ from chat_client_service.oidc import (
 )
 from chat_client_service.routers.auth import get_current_claims, get_oidc_config
 from chat_client_service.routers.chat import get_chat_client
+from chat_client_service.update_poller import (
+    DEFAULT_POLL_INTERVAL_SECONDS,
+    poll_interval_seconds,
+    should_start_update_poller,
+)
 from telegram_client_impl.store import get_store
 
 
@@ -33,6 +38,7 @@ def clear_overrides_and_store(
 ) -> Generator[None, None, None]:
     """Clear FastAPI overrides and process-local bot state around tests."""
     monkeypatch.setenv("CHAT_CLIENT_STORE_PATH", ":memory:")
+    monkeypatch.delenv("TELEGRAM_UPDATE_MODE", raising=False)
     app.dependency_overrides.clear()
     get_store().clear()
     yield
@@ -122,6 +128,22 @@ def test_health(client: TestClient) -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_update_poller_env_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Polling mode is explicit and has a safe interval fallback."""
+    monkeypatch.delenv("TELEGRAM_UPDATE_MODE", raising=False)
+    monkeypatch.delenv("TELEGRAM_POLL_INTERVAL_SECONDS", raising=False)
+    assert should_start_update_poller() is False
+    assert poll_interval_seconds() == DEFAULT_POLL_INTERVAL_SECONDS
+
+    monkeypatch.setenv("TELEGRAM_UPDATE_MODE", "polling")
+    monkeypatch.setenv("TELEGRAM_POLL_INTERVAL_SECONDS", "0")
+    assert should_start_update_poller() is True
+    assert poll_interval_seconds() == 0.5
+
+    monkeypatch.setenv("TELEGRAM_POLL_INTERVAL_SECONDS", "bad")
+    assert poll_interval_seconds() == DEFAULT_POLL_INTERVAL_SECONDS
+
+
 def test_chat_requires_bearer_token(client: TestClient) -> None:
     """Chat endpoints require local OIDC-derived Bearer auth."""
     response = client.get("/chat/channels")
@@ -180,6 +202,27 @@ def test_chat_delete_accepts_returned_opaque_message_id(client: TestClient) -> N
 
     assert response.status_code == 200
     service_client.delete_message.assert_called_once_with(message_id="123:5")
+
+
+def test_chat_messages_forwards_cursor(client: TestClient) -> None:
+    """Message reads pass cursor through for incremental consumers."""
+    service_client = Mock()
+    service_client.get_messages.return_value = iter([_message()])
+    app.dependency_overrides[get_current_claims] = _allow_auth
+    app.dependency_overrides[get_chat_client] = lambda: service_client
+    get_store().grant_access(telegram_id="42", channel_id="123")
+
+    response = client.get(
+        "/chat/messages",
+        params={"channel_id": "123", "limit": 5, "cursor": "123:4"},
+    )
+
+    assert response.status_code == 200
+    service_client.get_messages.assert_called_once_with(
+        channel_id="123",
+        limit=5,
+        cursor="123:4",
+    )
 
 
 def test_chat_delete_accepts_opaque_message_id_with_channel_query(
@@ -597,6 +640,55 @@ def test_auth_session_flow_authenticates_chat_with_session_header(
     service_client.send_message.assert_called_once_with("42", "hello")
 
 
+def test_auth_callback_cookie_authenticates_chat_routes(client: TestClient) -> None:
+    """Browser cookie and X-Session-ID use the same service session."""
+    config = OidcConfig(
+        client_id="123",
+        client_secret=None,
+        service_base_url="http://testserver",
+        app_session_secret="app-secret",
+    )
+    app.dependency_overrides[get_oidc_config] = lambda: config
+    service_client = Mock()
+    service_client.send_message.return_value = _message()
+    app.dependency_overrides[get_chat_client] = lambda: service_client
+    _client_id, nonce = begin_login_library(config)
+
+    with patch(
+        "chat_client_service.oidc.verify_id_token",
+        return_value={
+            "id": 42,
+            "sub": "oidc-sub",
+            "preferred_username": "alice",
+            "name": "Alice",
+        },
+    ):
+        callback_response = client.post(
+            "/auth/callback",
+            json={"id_token": "telegram-id-token", "nonce": nonce},
+        )
+
+    chat_response = client.post(
+        "/chat/messages",
+        json={"channel_id": "me", "text": "hello"},
+    )
+    session_id = client.cookies.get("chat_client_session")
+    assert session_id is not None
+    client.cookies.clear()
+    header_response = client.post(
+        "/chat/messages",
+        headers={"X-Session-ID": session_id},
+        json={"channel_id": "me", "text": "again"},
+    )
+
+    assert callback_response.status_code == 200
+    assert "chat_client_session" in callback_response.headers["set-cookie"]
+    assert chat_response.status_code == 200
+    assert header_response.status_code == 200
+    service_client.send_message.assert_any_call("42", "hello")
+    service_client.send_message.assert_any_call("42", "again")
+
+
 def test_auth_session_logout_rejects_session_header(client: TestClient) -> None:
     """Deleting a service auth session invalidates X-Session-ID auth."""
     config = OidcConfig(
@@ -653,6 +745,45 @@ def test_auth_me_decodes_local_token(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.json()["telegram_id"] == "42"
+
+
+def test_decode_app_token_omits_null_optional_claims() -> None:
+    """Telegram tokens without username/name do not expose literal 'None' values."""
+    config = OidcConfig(
+        client_id="client-id",
+        client_secret="secret",
+        service_base_url="https://example.com",
+        app_session_secret="app-secret",
+    )
+    token = issue_app_token(
+        config=config,
+        claims={
+            "id": 42,
+            "sub": "oidc-sub",
+            "preferred_username": None,
+            "name": None,
+        },
+    )
+
+    claims = decode_app_token(config=config, token=token)
+
+    assert claims is not None
+    assert claims["telegram_id"] == "42"
+    assert "username" not in claims
+    assert "name" not in claims
+
+
+def test_issue_app_token_rejects_missing_telegram_identity() -> None:
+    """Local service tokens require a non-empty Telegram user id."""
+    config = OidcConfig(
+        client_id="client-id",
+        client_secret="secret",
+        service_base_url="https://example.com",
+        app_session_secret="app-secret",
+    )
+
+    with pytest.raises(ValueError, match="Telegram user id is required"):
+        issue_app_token(config=config, claims={"preferred_username": "alice"})
 
 
 def test_auth_me_rejects_tampered_token(client: TestClient) -> None:

@@ -28,6 +28,26 @@ def get_chat_client() -> Client:
     return get_client(interactive=False)
 
 
+class MessageListQuery:
+    """Query parameters for listing messages."""
+
+    def __init__(
+        self,
+        limit: Annotated[int | None, Query(gt=0)] = None,
+        max_results: Annotated[int | None, Query(gt=0)] = None,
+        cursor: str | None = None,
+    ) -> None:
+        """Capture message list query values."""
+        self.limit = limit
+        self.max_results = max_results
+        self.cursor = cursor
+
+    @property
+    def requested_limit(self) -> int:
+        """Return the shared API limit value."""
+        return self.limit if self.limit is not None else (self.max_results or 10)
+
+
 @router.post("/messages")
 def send_message(
     request: SendMessageRequest,
@@ -56,19 +76,18 @@ def get_messages(
     channel_id: str,
     claims: Annotated[dict[str, str], Depends(get_current_claims)],
     client: Annotated[Client, Depends(get_chat_client)],
-    limit: Annotated[int | None, Query(gt=0)] = None,
-    max_results: Annotated[int | None, Query(gt=0)] = None,
+    query: Annotated[MessageListQuery, Depends()],
 ) -> list[MessageModel]:
     """Return bot-observed messages for a known Telegram chat."""
     channel_id = _resolve_channel_id(claims=claims, channel_id=channel_id)
     _require_channel_access(claims=claims, channel_id=channel_id, client=client)
-    requested_limit = limit if limit is not None else (max_results or 10)
     try:
         return [
             _message_model(message)
             for message in client.get_messages(
                 channel_id=channel_id,
-                limit=requested_limit,
+                limit=query.requested_limit,
+                cursor=query.cursor,
             )
         ]
     except Exception as exc:

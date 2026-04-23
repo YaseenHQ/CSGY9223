@@ -8,6 +8,7 @@ members = [
     "chat-client-adapter",
     "chat-client-service",
     "chat-client-service-api-client",
+    "issue-tracker-integration",
     "telegram-client-impl",
 ]
 
@@ -162,6 +163,8 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "chat-client-api" },
+    { name = "issue-tracker-integration" },
+    { name = "ospd-issue-tracker-api" },
     { name = "telegram-client-impl" },
 ]
 
@@ -187,9 +190,11 @@ requires-dist = [
     { name = "chat-client-api", git = "https://github.com/HarshithKoriRaj/Shared-API.git" },
     { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.115.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
+    { name = "issue-tracker-integration", editable = "components/issue_tracker_integration" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.5.0" },
     { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
+    { name = "ospd-issue-tracker-api", git = "https://github.com/tatyanacthomas/ospd_issue_tracker.git" },
     { name = "pydantic", marker = "extra == 'dev'", specifier = ">=2.8.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.1.0" },
@@ -440,6 +445,39 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
+]
+
+[[package]]
+name = "issue-tracker-client-api"
+version = "0.1.0"
+source = { git = "https://github.com/somadisingh/ospsd-team7-issue-tracker.git?subdirectory=components%2Fissue_tracker_client_api#16040e1ccd5e7e79c8b3819a0209b103196ba98f" }
+
+[[package]]
+name = "issue-tracker-client-impl"
+version = "0.1.0"
+source = { git = "https://github.com/somadisingh/ospsd-team7-issue-tracker.git?subdirectory=components%2Ftrello_client_impl#16040e1ccd5e7e79c8b3819a0209b103196ba98f" }
+dependencies = [
+    { name = "issue-tracker-client-api" },
+    { name = "requests" },
+]
+
+[[package]]
+name = "issue-tracker-integration"
+version = "0.1.0"
+source = { editable = "components/issue_tracker_integration" }
+dependencies = [
+    { name = "issue-tracker-client-api" },
+    { name = "issue-tracker-client-impl" },
+    { name = "ospd-issue-tracker-api" },
+    { name = "requests" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "issue-tracker-client-api", git = "https://github.com/somadisingh/ospsd-team7-issue-tracker.git?subdirectory=components%2Fissue_tracker_client_api" },
+    { name = "issue-tracker-client-impl", git = "https://github.com/somadisingh/ospsd-team7-issue-tracker.git?subdirectory=components%2Ftrello_client_impl" },
+    { name = "ospd-issue-tracker-api", git = "https://github.com/tatyanacthomas/ospd_issue_tracker.git" },
+    { name = "requests", specifier = ">=2.31.0" },
 ]
 
 [[package]]
@@ -705,6 +743,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/a2/6e/371856a3fb9d31ca8
 wheels = [
     { url = "https://files.pythonhosted.org/packages/79/7b/2c79738432f5c924bef5071f933bcc9efd0473bac3b4aa584a6f7c1c8df8/mypy_extensions-1.1.0-py3-none-any.whl", hash = "sha256:1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505", size = 4963, upload-time = "2025-04-22T14:54:22.983Z" },
 ]
+
+[[package]]
+name = "ospd-issue-tracker-api"
+version = "0.1.0"
+source = { git = "https://github.com/tatyanacthomas/ospd_issue_tracker.git#63abe1c8607fce7e92a1a68475580fd380e3a1ed" }
 
 [[package]]
 name = "packaging"

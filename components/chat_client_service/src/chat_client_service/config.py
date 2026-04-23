@@ -19,6 +19,7 @@ def load_environment(env_file: str | Path = ".env") -> bool:
     for key, value in values.items():
         if value in (None, "") or key in os.environ:
             continue
+        assert value is not None
         os.environ[key] = value
         loaded = True
 

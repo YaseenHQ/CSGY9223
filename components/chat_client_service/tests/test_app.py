@@ -3,7 +3,7 @@
 import os
 from collections.abc import Generator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import Mock, patch
 
 import pytest
@@ -39,6 +39,12 @@ def _message_dto(*, message_id: str = "m-1") -> Message:
     )
 
 
+def _awaited_call_kwargs(mock_obj: Mock) -> dict[str, Any]:
+    await_args = mock_obj.await_args
+    assert await_args is not None
+    return dict(await_args.kwargs)
+
+
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
@@ -60,7 +66,7 @@ def test_health_request_emits_success_telemetry() -> None:
 
     assert response.status_code == 200
     publish_metrics.assert_called_once()
-    kwargs: dict[str, Any] = publish_metrics.await_args.kwargs
+    kwargs = _awaited_call_kwargs(publish_metrics)
     assert kwargs["service"] == "chat_client_service"
     assert kwargs["endpoint"] == "/health"
     assert kwargs["status_code"] == 200
@@ -81,7 +87,7 @@ def test_parameterized_route_uses_template_endpoint_dimension(
         response = client.get("/chat/messages/m-1")
 
     assert response.status_code == 200
-    kwargs: dict[str, Any] = publish_metrics.await_args.kwargs
+    kwargs = _awaited_call_kwargs(publish_metrics)
     assert kwargs["endpoint"] == "/chat/messages/{message_id}"
     assert kwargs["status_code"] == 200
     assert kwargs["success"] == 1
@@ -98,7 +104,7 @@ def test_failure_response_emits_failure_telemetry(mock_chat_client: Mock) -> Non
         response = client.get("/chat/channels")
 
     assert response.status_code == 500
-    kwargs: dict[str, Any] = publish_metrics.await_args.kwargs
+    kwargs = _awaited_call_kwargs(publish_metrics)
     assert kwargs["endpoint"] == "/chat/channels"
     assert kwargs["status_code"] == 500
     assert kwargs["success"] == 0
@@ -129,7 +135,7 @@ def test_unhandled_exception_still_emits_failure_telemetry() -> None:
         app.router.routes.pop()
 
     assert response.status_code == 500
-    kwargs: dict[str, Any] = publish_metrics.await_args.kwargs
+    kwargs = _awaited_call_kwargs(publish_metrics)
     assert kwargs["endpoint"] == "/telemetry-boom"
     assert kwargs["status_code"] == 500
     assert kwargs["success"] == 0
@@ -153,7 +159,11 @@ def test_build_request_metrics_event_uses_emf_shape() -> None:
     assert event["SuccessRate"] == 1
     assert event["FailureRate"] == 0
 
-    metadata = event["_aws"]
+    metadata = cast("dict[str, object]", event["_aws"])
+    cloudwatch_metrics = cast(
+        "list[dict[str, object]]",
+        metadata["CloudWatchMetrics"],
+    )
     assert metadata["CloudWatchMetrics"] == [
         {
             "Dimensions": [["Service", "Endpoint"]],
@@ -165,6 +175,7 @@ def test_build_request_metrics_event_uses_emf_shape() -> None:
             "Namespace": "OSPSD/HW3",
         }
     ]
+    assert cloudwatch_metrics[0]["Namespace"] == "OSPSD/HW3"
     assert isinstance(metadata["Timestamp"], int)
 
 

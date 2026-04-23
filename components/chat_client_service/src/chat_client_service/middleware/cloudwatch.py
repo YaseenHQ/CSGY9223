@@ -63,6 +63,14 @@ def _build_stdout_handler() -> logging.Handler:
 
 def _build_cloudwatch_handler(config: CloudWatchConfig) -> logging.Handler:
     client = boto3.client("logs", region_name=config.region_name)
+    if config.stream_name is None:
+        return watchtower.CloudWatchLogHandler(
+            boto3_client=client,
+            log_group_name=config.log_group_name,
+            use_queues=config.use_queues,
+            send_interval=config.send_interval,
+            create_log_group=False,
+        )
     return watchtower.CloudWatchLogHandler(
         boto3_client=client,
         log_group_name=config.log_group_name,

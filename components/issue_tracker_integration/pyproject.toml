@@ -9,6 +9,8 @@ dependencies = [
     "issue-tracker-client-api",
     "issue-tracker-client-impl",
     "requests>=2.31.0",
+    "ai-client-api",
+    "chat-client-api",
 ]
 
 [build-system]

@@ -13,6 +13,7 @@ dependencies = [
     "chat-client-api",
     "issue-tracker-integration",
     "ospd-issue-tracker-api",
+    "openai-client-impl",
 ]
 
 [project.optional-dependencies]
@@ -61,6 +62,8 @@ known-first-party = [
     "chat_client_service_api_client",
     "chat_client_adapter",
     "issue_tracker_integration",
+    "ai_client_api",
+    "openai_client_impl",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -84,6 +87,8 @@ testpaths = [
     "components/chat_client_service_api_client/tests",
     "components/chat_client_adapter/tests",
     "components/issue_tracker_integration/tests",
+    "components/ai_client_api/tests",
+    "components/openai_client_impl/tests",
 ]
 pythonpath = [
     ".",
@@ -92,6 +97,8 @@ pythonpath = [
     "components/chat_client_service_api_client/src",
     "components/chat_client_adapter/src",
     "components/issue_tracker_integration/src",
+    "components/ai_client_api/src",
+    "components/openai_client_impl/src",
 ]
 markers = [
     "e2e: marks end-to-end tests that may require external credentials",
@@ -149,6 +156,8 @@ members = [
     "components/chat_client_service_api_client",
     "components/chat_client_adapter",
     "components/issue_tracker_integration",
+    "components/ai_client_api",
+    "components/openai_client_impl",
 ]
 
 [tool.uv.sources]
@@ -161,6 +170,8 @@ chat-client-service = { workspace = true }
 chat-client-service-api-client = { workspace = true }
 chat-client-adapter = { workspace = true }
 issue-tracker-integration = { workspace = true }
+ai-client-api = { workspace = true }
+openai-client-impl = { workspace = true }
 
 [tool.coverage.run]
 source = ["components"]

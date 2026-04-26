@@ -113,7 +113,8 @@ def root() -> HTMLResponse:
         localStorage.removeItem("telegram_auth_state");
         localStorage.removeItem("telegram_auth_session_id");
         window.history.replaceState(null, "", "/");
-        statusBox.textContent = "Login complete. Return to your API client.";
+        statusBox.textContent =
+          "Login complete. You can close this tab and return to your API client.";
         if (window.opener && !window.opener.closed) {
           window.opener.postMessage(
             {
@@ -122,9 +123,6 @@ def root() -> HTMLResponse:
             },
             window.location.origin
           );
-        }
-        if (window.name === "telegram_auth_popup") {
-          window.close();
         }
       });
     }

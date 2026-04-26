@@ -522,6 +522,8 @@ def test_root_serves_telegram_fragment_handler() -> None:
     assert "localStorage.getItem" in response.text
     assert "window.opener.postMessage" in response.text
     assert 'type: "telegram-auth-complete"' in response.text
+    assert "You can close this tab and return to your API client." in response.text
+    assert "window.close()" not in response.text
 
 
 def test_telegram_hash_login_authenticates_session() -> None:

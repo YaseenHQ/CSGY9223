@@ -12,18 +12,12 @@
 When `telegram_client_impl` is imported, it registers an implementation factory
 into `chat_client_api` through `register_client(get_client_impl)`.
 
-That keeps the shared API contract unchanged while letting this branch swap the
-Telegram backend from Telethon to the Bot API.
+Application code depends on the shared `chat_client_api` contract, not on
+Telegram-specific implementation details.
 
 ## Authentication
 
-This branch keeps the Bot API runtime migration but restores the stronger auth
-model from the hardened experiment branch: Telegram OIDC / Login plus a local
-service session.
-
-The Bot API switch is an implementation detail that supports the deployed
-service auth model. The shared `chat_client_api` contract remains the public
-integration surface.
+The service uses Telegram OIDC / Login plus a local service session.
 
 - `POST /auth/sessions` creates a pending service session
 - `GET /auth/login?flow=page` serves the hosted Telegram Login page

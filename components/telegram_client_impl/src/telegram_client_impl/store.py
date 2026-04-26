@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
+from time import time
 
 from chat_client_api import Channel, Message
 
@@ -88,7 +89,7 @@ class BotUpdateStore:
                     sender TEXT NOT NULL,
                     timestamp TEXT NOT NULL,
                     text TEXT NOT NULL,
-                    stored_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                    stored_at INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (channel_id, message_id)
                 );
 
@@ -162,7 +163,7 @@ class BotUpdateStore:
                 """
                 INSERT OR REPLACE INTO messages
                     (channel_id, message_id, sender, timestamp, text, stored_at)
-                VALUES (?, ?, ?, ?, ?, unixepoch())
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     message.channel_id,
@@ -170,6 +171,7 @@ class BotUpdateStore:
                     message.sender,
                     message.timestamp,
                     message.text,
+                    int(time()),
                 ),
             )
 

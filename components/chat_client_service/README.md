@@ -119,7 +119,7 @@ Message responses use opaque `channel_id:message_id` ids. Pass that value back
 to `DELETE /chat/messages/{message_id}` when deleting.
 
 If an example uses `OSSHWBOTTEST`, replace it with any group or channel where
-the bot is present. Unlike the old Telethon path, `me` is not Saved Messages.
+the bot is present. `me` means the logged-in user's direct chat with the bot.
 
 ## Polling vs Webhook
 

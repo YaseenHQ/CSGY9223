@@ -1,8 +1,7 @@
 # CS-GY-9223 Open Source
 
-A chat client workspace with a shared vertical API and a Telegram
-implementation. In this branch, the Telegram component uses the official Bot
-API instead of Telethon.
+A chat client workspace with a shared vertical API, a Telegram-backed service,
+AI client components, and issue tracker integration.
 
 ## Team
 
@@ -89,8 +88,8 @@ the bot is present.
 
 ## Auth Flow
 
-This branch keeps the Bot API runtime from the migration work and restores the
-Telegram OIDC/session auth model from the hardened experiment branch.
+The service uses Telegram Login/OIDC plus local service sessions for HTTP
+clients.
 
 Primary session-first path:
 

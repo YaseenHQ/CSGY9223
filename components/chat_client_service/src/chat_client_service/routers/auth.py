@@ -1,264 +1,754 @@
-"""Telegram Login Widget authentication flow.
-
-Flow
-----
-1. GET /auth/login
-   Generates CSRF state, stores it in an httpOnly cookie, redirects to Telegram.
-
-2. Telegram authenticates the user and redirects to:
-   GET /auth/callback#tgAuthResult=<base64-json>
-   The hash fragment is client-side only — the server returns an HTML page whose
-   JavaScript decodes it and POSTs the data to /auth/verify.
-
-3. POST /auth/verify
-   Reads the CSRF cookie, verifies Telegram's HMAC-SHA256 hash, issues a signed
-   Bearer token that encodes the user's Telegram identity.  No server-side session
-   store is required — the token is self-contained and survives service restarts.
-"""
+"""Telegram OIDC authentication routes."""
 
 import base64
-import hashlib
-import hmac
 import json
 import secrets
-from os import getenv
+import time
 from typing import Annotated
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Cookie,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    status,
+)
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict
 
-from chat_client_service.models import OAuthCallbackResponse
+from chat_client_service.models import (
+    AuthSessionResponse,
+    AuthSessionStatusResponse,
+    LegacyTelegramVerifyRequest,
+    LogoutResponse,
+    MeResponse,
+    OAuthCallbackResponse,
+    TelegramHashLoginCallbackRequest,
+    TelegramLoginCallbackRequest,
+    TelegramLoginConfigResponse,
+    TokenResponse,
+)
+from chat_client_service.oidc import (
+    OidcConfig,
+    begin_login,
+    begin_login_library,
+    complete_login,
+    complete_login_library,
+    complete_telegram_hash_login,
+    decode_app_token,
+)
+from telegram_client_impl.store import StoredChannel, get_store
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-_TELEGRAM_OAUTH_URL = "https://oauth.telegram.org/auth"
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _bot_token() -> str:
-    return getenv("TELEGRAM_BOT_TOKEN", "")
-
-
-def _bot_id() -> str:
-    return _bot_token().split(":")[0]
-
-
-def _service_base_url(request: Request) -> str:
-    override = getenv("SERVICE_BASE_URL", "")
-    if override:
-        return override.rstrip("/")
-    return str(request.base_url).rstrip("/")
-
-
-def _verify_telegram_hash(data: dict[str, str]) -> bool:
-    """Verify the HMAC-SHA256 hash Telegram signs its auth results with."""
-    bot_tok = _bot_token()
-    received_hash = data.get("hash", "")
-    check_data = {k: v for k, v in data.items() if k != "hash"}
-    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(check_data.items()))
-    secret_key = hashlib.sha256(bot_tok.encode()).digest()
-    computed = hmac.new(
-        secret_key, data_check_string.encode(), hashlib.sha256
-    ).hexdigest()
-    return hmac.compare_digest(computed, received_hash)
-
-
-def _issue_token(telegram_id: int, first_name: str, username: str) -> str:
-    """Return a self-contained HMAC-signed Bearer token (no server-side state)."""
-    body = {"telegram_id": telegram_id, "first_name": first_name, "username": username}
-    payload = (
-        base64.urlsafe_b64encode(json.dumps(body, separators=(",", ":")).encode())
-        .rstrip(b"=")
-        .decode()
-    )
-    sig = hmac.new(_bot_token().encode(), payload.encode(), hashlib.sha256).hexdigest()
-    return f"{payload}.{sig}"
-
-
-def _decode_token(token: str) -> dict[str, str] | None:
-    """Verify signature and decode a Bearer token.  Returns None if invalid."""
-    try:
-        payload, sig = token.rsplit(".", 1)
-    except ValueError:
-        return None
-    expected = hmac.new(
-        _bot_token().encode(), payload.encode(), hashlib.sha256
-    ).hexdigest()
-    if not hmac.compare_digest(expected, sig):
-        return None
-    try:
-        data = json.loads(base64.urlsafe_b64decode(payload + "=="))
-    except ValueError:
-        return None
-    if not isinstance(data, dict):
-        return None
-    return {str(k): str(v) for k, v in data.items()}
-
-
-# ---------------------------------------------------------------------------
-# Auth dependency
-# ---------------------------------------------------------------------------
-
 _bearer = HTTPBearer(auto_error=False)
+_APP_SESSION_COOKIE = "chat_client_session"
+_STATE_COOKIE = "telegram_auth_state"
+_PENDING_SESSION_COOKIE = "telegram_auth_session_id"
+_TOKEN_TYPE_BEARER = "bearer"  # noqa: S105
+
+
+def get_oidc_config() -> OidcConfig:
+    """Return OIDC config from environment."""
+    return OidcConfig.from_env()
 
 
 def get_current_token(
     credentials: Annotated[
-        HTTPAuthorizationCredentials | None, Depends(_bearer)
+        HTTPAuthorizationCredentials | None,
+        Depends(_bearer),
+    ],
+    config: Annotated[OidcConfig, Depends(get_oidc_config)],
+    x_session_id: Annotated[str | None, Header(alias="X-Session-ID")] = None,
+    chat_client_session: Annotated[
+        str | None,
+        Cookie(alias=_APP_SESSION_COOKIE),
     ] = None,
 ) -> str:
     """Return the validated Bearer token or raise 401."""
-    if credentials is None or _decode_token(credentials.credentials) is None:
+    token: str | None = None
+    if credentials is None:
+        session_id = x_session_id or chat_client_session
+        if session_id is not None:
+            token = get_store().token_for_session(session_id=session_id)
+    else:
+        token = credentials.credentials
+    if token is None:
+        raise _unauthorized()
+    if decode_app_token(config=config, token=token) is None:
+        raise _unauthorized()
+    return token
+
+
+def get_current_claims(
+    token: Annotated[str, Depends(get_current_token)],
+    config: Annotated[OidcConfig, Depends(get_oidc_config)],
+) -> dict[str, str]:
+    """Return validated local session claims or raise 401."""
+    claims = decode_app_token(config=config, token=token)
+    if claims is None or not claims.get("telegram_id"):
+        raise _unauthorized()
+    return claims
+
+
+@router.post(
+    "/sessions",
+    status_code=status.HTTP_201_CREATED,
+)
+def create_auth_session(
+    config: Annotated[OidcConfig, Depends(get_oidc_config)],
+) -> AuthSessionResponse:
+    """Create a pending service auth session for adapter clients."""
+    session_id = secrets.token_urlsafe(24)
+    get_store().create_auth_session(
+        session_id=session_id,
+        created_at=int(time.time()),
+    )
+    return AuthSessionResponse(
+        session_id=session_id,
+        authenticated=False,
+        login_url=_session_login_url(config=config, session_id=session_id),
+        status_url=_session_status_url(config=config, session_id=session_id),
+    )
+
+
+@router.get("/login", response_model=None)
+def auth_login(
+    config: Annotated[OidcConfig, Depends(get_oidc_config)],
+    session_id: Annotated[str | None, Query(min_length=1)] = None,
+    flow: Annotated[str, Query(pattern="^(auto|page|code)$")] = "auto",
+) -> HTMLResponse | RedirectResponse:
+    """Start Telegram Login with OIDC code flow or the hosted page fallback."""
+    _require_known_session(session_id)
+    if flow == "code":
+        return _auth_code_redirect(config=config, session_id=session_id)
+    if flow == "auto" and config.client_secret:
+        return _auth_code_launch_page(config=config, session_id=session_id)
+
+    try:
+        client_id, nonce = begin_login_library(config, session_id=session_id)
+    except (TypeError, ValueError) as exc:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated. Start at /auth/login.",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    response = HTMLResponse(
+        content=_login_page_html(
+            client_id=client_id,
+            nonce=nonce,
+            origin=config.service_base_url.rstrip("/"),
+            session_id=session_id,
         )
-    return credentials.credentials
-
-
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
-
-_CALLBACK_HTML = """\
-<!DOCTYPE html>
-<html>
-<head><title>Completing login</title></head>
-<body>
-<p id="status">Decoding Telegram result...</p>
-<script>
-(function () {
-  var out = document.getElementById("status");
-  var hash = window.location.hash.slice(1);
-  var params = new URLSearchParams(hash);
-  var raw = params.get("tgAuthResult");
-  if (!raw) {
-    out.textContent = "Error: no tgAuthResult found. Try /auth/login again.";
-    return;
-  }
-  var data;
-  try { data = JSON.parse(atob(raw)); }
-  catch (e) {
-    out.textContent = "Error decoding tgAuthResult: " + e;
-    return;
-  }
-  out.textContent = "Verifying with server...";
-  fetch("/auth/verify", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify(data)
-  })
-  .then(function(r) {
-    out.textContent = "Server responded " + r.status + ". Parsing...";
-    var status = r.status;
-    return r.json().then(function(body) {
-      return { status: status, body: body };
-    });
-  })
-  .then(function(res) {
-    document.body.innerHTML = "<pre>" + JSON.stringify(res.body, null, 2) + "</pre>";
-  })
-  .catch(function(e) {
-    out.textContent = "Error: " + e + ". Check console for details.";
-    console.error(e);
-  });
-})();
-</script>
-</body>
-</html>
-"""
-
-
-@router.get("/login")
-def auth_login(request: Request) -> RedirectResponse:
-    """Redirect to Telegram Login Widget; store CSRF state in an httpOnly cookie."""
-    state = secrets.token_urlsafe(32)
-    base = _service_base_url(request)
-    callback_url = f"{base}/auth/callback"
-    url = (
-        f"{_TELEGRAM_OAUTH_URL}"
-        f"?bot_id={_bot_id()}"
-        f"&origin={base}"
-        f"&return_to={callback_url}"
     )
-    redirect = RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
-    redirect.set_cookie(
-        "oauth_state", state, httponly=True, samesite="lax", max_age=300
+    _set_auth_cookies(
+        response=response,
+        config=config,
+        state=nonce,
+        session_id=session_id,
     )
-    return redirect
+    return response
+
+
+def _auth_code_redirect(
+    *,
+    config: OidcConfig,
+    session_id: str | None,
+) -> RedirectResponse:
+    try:
+        url, state = begin_login(config, session_id=session_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    response = RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+    _set_auth_cookies(
+        response=response,
+        config=config,
+        state=state,
+        session_id=session_id,
+    )
+    return response
+
+
+def _auth_code_launch_page(
+    *,
+    config: OidcConfig,
+    session_id: str | None,
+) -> HTMLResponse:
+    try:
+        url, state = begin_login(config, session_id=session_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    response = HTMLResponse(
+        content=_login_redirect_html(
+            url=url,
+            state=state,
+            session_id=session_id,
+        )
+    )
+    _set_auth_cookies(
+        response=response,
+        config=config,
+        state=state,
+        session_id=session_id,
+    )
+    return response
+
+
+def _set_auth_cookies(
+    *,
+    response: HTMLResponse | RedirectResponse,
+    config: OidcConfig,
+    state: str,
+    session_id: str | None,
+) -> None:
+    response.set_cookie(
+        _STATE_COOKIE,
+        state,
+        httponly=True,
+        max_age=300,
+        samesite="lax",
+        secure=config.service_base_url.startswith("https://"),
+    )
+    if session_id is not None:
+        response.set_cookie(
+            _PENDING_SESSION_COOKIE,
+            session_id,
+            httponly=True,
+            max_age=300,
+            samesite="lax",
+            secure=config.service_base_url.startswith("https://"),
+        )
+    else:
+        response.delete_cookie(_PENDING_SESSION_COOKIE)
+
+
+@router.get("/login/config")
+def auth_login_config(
+    config: Annotated[OidcConfig, Depends(get_oidc_config)],
+    session_id: Annotated[str | None, Query(min_length=1)] = None,
+) -> TelegramLoginConfigResponse:
+    """Return init data for Telegram.Login JavaScript library."""
+    _require_known_session(session_id)
+    try:
+        client_id, nonce = begin_login_library(config, session_id=session_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    return TelegramLoginConfigResponse(
+        client_id=client_id,
+        nonce=nonce,
+        origin=config.service_base_url.rstrip("/"),
+    )
 
 
 @router.get("/callback")
-def auth_callback() -> HTMLResponse:
-    """Serve the HTML bridge page that decodes #tgAuthResult and posts to /auth/verify.
+def auth_callback(
+    code: str,
+    state: str,
+    response: Response,
+    config: Annotated[OidcConfig, Depends(get_oidc_config)],
+) -> TokenResponse:
+    """Complete Telegram OIDC login and issue a local Bearer token."""
+    try:
+        token, session_id = complete_login(config=config, code=code, state=state)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return _issue_token_response(
+        config=config,
+        token=token,
+        response=response,
+        session_id=session_id,
+    )
 
-    The hash fragment is never sent to the server, so JS must extract and forward it.
-    """
-    return HTMLResponse(content=_CALLBACK_HTML)
+
+@router.post("/callback")
+def auth_login_library_callback(
+    request: TelegramLoginCallbackRequest,
+    response: Response,
+    config: Annotated[OidcConfig, Depends(get_oidc_config)],
+) -> TokenResponse:
+    """Complete Telegram.Login JavaScript id_token callback."""
+    try:
+        token, session_id = complete_login_library(
+            config=config,
+            id_token=request.id_token,
+            nonce=request.nonce,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return _issue_token_response(
+        config=config,
+        token=token,
+        response=response,
+        session_id=session_id,
+    )
 
 
-class _TelegramUser(BaseModel):
-    """Data Telegram sends in the tgAuthResult JSON blob.
-
-    ``extra="allow"`` ensures any field Telegram adds (e.g. last_name) is
-    preserved so it can be included in the data-check string for HMAC
-    verification — omitting any field Telegram signed will cause a hash
-    mismatch.
-    """
-
-    model_config = ConfigDict(extra="allow")
-
-    id: int
-    first_name: str
-    last_name: str | None = None
-    username: str | None = None
-    photo_url: str | None = None
-    auth_date: int
-    hash: str
+@router.post("/telegram-login")
+def auth_telegram_hash_callback(
+    request: TelegramHashLoginCallbackRequest,
+    response: Response,
+    config: Annotated[OidcConfig, Depends(get_oidc_config)],
+    telegram_auth_state: Annotated[str | None, Cookie(alias=_STATE_COOKIE)] = None,
+    telegram_auth_session_id: Annotated[
+        str | None,
+        Cookie(alias=_PENDING_SESSION_COOKIE),
+    ] = None,
+) -> TokenResponse:
+    """Complete Telegram hash login returned as a URL fragment."""
+    try:
+        token, session_id = complete_telegram_hash_login(
+            config=config,
+            auth_result=request.auth_result,
+            state=request.state or telegram_auth_state,
+            fallback_session_id=request.session_id or telegram_auth_session_id,
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return _issue_token_response(
+        config=config,
+        token=token,
+        response=response,
+        session_id=session_id,
+    )
 
 
 @router.post("/verify")
-def auth_verify(
-    user: _TelegramUser,
-    request: Request,
+def auth_verify_legacy(
+    payload: LegacyTelegramVerifyRequest,
     response: Response,
+    request: Request,
+    config: Annotated[OidcConfig, Depends(get_oidc_config)],
 ) -> OAuthCallbackResponse:
-    """Verify Telegram auth data from the callback page and issue a session token."""
-    state = request.cookies.get("oauth_state")
+    """Compatibility shim for the parent-branch /auth/verify endpoint."""
+    state = request.cookies.get(_STATE_COOKIE) or request.cookies.get("oauth_state")
     if not state:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing CSRF state cookie. Start the flow at /auth/login.",
         )
+    pending_session_id = request.cookies.get(_PENDING_SESSION_COOKIE)
 
-    telegram_data = {
-        k: str(v)
-        for k, v in user.model_dump(exclude_none=True).items()
-        if v is not None
-    }
-    if not _verify_telegram_hash(telegram_data):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Telegram hash verification failed.",
+    raw_payload = json.dumps(
+        payload.model_dump(exclude_none=True),
+        separators=(",", ":"),
+    ).encode()
+    auth_result = base64.urlsafe_b64encode(raw_payload).rstrip(b"=").decode()
+    try:
+        token, session_id = complete_telegram_hash_login(
+            config=config,
+            auth_result=auth_result,
+            state=state,
+            fallback_session_id=pending_session_id,
         )
+    except ValueError as exc:
+        status_code = status.HTTP_401_UNAUTHORIZED
+        if "hash mismatch" not in str(exc).lower():
+            status_code = status.HTTP_400_BAD_REQUEST
+        raise HTTPException(
+            status_code=status_code,
+            detail=str(exc),
+        ) from exc
+    except TypeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
-    session_token = _issue_token(user.id, user.first_name, user.username or "")
+    claims = decode_app_token(config=config, token=token)
+    if claims is not None:
+        _grant_self_chat_access(claims)
+        if session_id is not None:
+            get_store().authenticate_session(
+                session_id=session_id,
+                token=token,
+                claims=claims,
+            )
+            _set_app_session_cookie(
+                response=response,
+                config=config,
+                session_id=session_id,
+            )
+
+    response.delete_cookie(_STATE_COOKIE)
     response.delete_cookie("oauth_state")
+    response.delete_cookie(_PENDING_SESSION_COOKIE)
     return OAuthCallbackResponse(
         detail="Authenticated successfully.",
         state=state,
-        access_token=session_token,
-        token_type="bearer",  # noqa: S106
+        access_token=token,
+        token_type=_TOKEN_TYPE_BEARER,
     )
 
 
 @router.get("/me")
-def auth_me(token: Annotated[str, Depends(get_current_token)]) -> dict[str, str]:
-    """Return session info for the authenticated caller."""
-    return {"token": token, **((_decode_token(token)) or {})}
+def auth_me(
+    claims: Annotated[dict[str, str], Depends(get_current_claims)],
+) -> MeResponse:
+    """Return identity from the authenticated local session."""
+    return MeResponse(
+        telegram_id=claims.get("telegram_id", ""),
+        username=claims.get("username"),
+        name=claims.get("name"),
+    )
+
+
+@router.get("/sessions/{session_id}")
+def get_auth_session(
+    session_id: str,
+    config: Annotated[OidcConfig, Depends(get_oidc_config)],
+) -> AuthSessionStatusResponse:
+    """Return the current auth state for a service session."""
+    session = get_store().get_auth_session(session_id=session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Unknown auth session.",
+        )
+    authenticated = (
+        session.token is not None
+        and decode_app_token(config=config, token=session.token) is not None
+    )
+    return AuthSessionStatusResponse(
+        session_id=session.session_id,
+        authenticated=authenticated,
+        telegram_id=session.telegram_id,
+        username=session.username,
+        name=session.name,
+    )
+
+
+@router.delete("/sessions/{session_id}")
+def delete_auth_session(
+    session_id: str,
+    response: Response,
+    config: Annotated[OidcConfig, Depends(get_oidc_config)],
+) -> LogoutResponse:
+    """Delete a service auth session."""
+    get_store().delete_auth_session(session_id=session_id)
+    _clear_app_session_cookie(response=response, config=config)
+    response.delete_cookie(_PENDING_SESSION_COOKIE)
+    return LogoutResponse(success=True)
+
+
+def _unauthorized() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Not authenticated. Start at /auth/login.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _issue_token_response(
+    *,
+    config: OidcConfig,
+    token: str,
+    response: Response,
+    session_id: str | None = None,
+) -> TokenResponse:
+    claims = decode_app_token(config=config, token=token)
+    if claims is not None:
+        _grant_self_chat_access(claims)
+        session_id = session_id or secrets.token_urlsafe(24)
+        if get_store().get_auth_session(session_id=session_id) is None:
+            get_store().create_auth_session(
+                session_id=session_id,
+                created_at=int(time.time()),
+            )
+        get_store().authenticate_session(
+            session_id=session_id,
+            token=token,
+            claims=claims,
+        )
+        _set_app_session_cookie(
+            response=response,
+            config=config,
+            session_id=session_id,
+        )
+    return TokenResponse(access_token=token)
+
+
+def _set_app_session_cookie(
+    *,
+    response: Response,
+    config: OidcConfig,
+    session_id: str,
+) -> None:
+    response.set_cookie(
+        _APP_SESSION_COOKIE,
+        session_id,
+        httponly=True,
+        max_age=config.app_session_ttl_seconds,
+        samesite="lax",
+        secure=config.service_base_url.startswith("https://"),
+    )
+
+
+def _clear_app_session_cookie(
+    *,
+    response: Response,
+    config: OidcConfig,
+) -> None:
+    response.delete_cookie(
+        _APP_SESSION_COOKIE,
+        httponly=True,
+        samesite="lax",
+        secure=config.service_base_url.startswith("https://"),
+    )
+
+
+def _grant_self_chat_access(claims: dict[str, str]) -> None:
+    telegram_id = claims.get("telegram_id", "")
+    if not telegram_id:
+        return
+    name = claims.get("username") or claims.get("name") or telegram_id
+    store = get_store()
+    store.upsert_channel(
+        StoredChannel(
+            channel_id=telegram_id,
+            name=name,
+            channel_type="private",
+        )
+    )
+    store.grant_access(telegram_id=telegram_id, channel_id=telegram_id)
+
+
+def _require_known_session(session_id: str | None) -> None:
+    if session_id is None:
+        return
+    if get_store().get_auth_session(session_id=session_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Unknown auth session.",
+        )
+
+
+def _session_login_url(*, config: OidcConfig, session_id: str) -> str:
+    return (
+        f"{config.service_base_url.rstrip('/')}/auth/login?"
+        f"{urlencode({'session_id': session_id, 'flow': 'page'})}"
+    )
+
+
+def _session_status_url(*, config: OidcConfig, session_id: str) -> str:
+    return f"{config.service_base_url.rstrip('/')}/auth/sessions/{session_id}"
+
+
+def _login_redirect_html(
+    *,
+    url: str,
+    state: str,
+    session_id: str | None,
+) -> str:
+    url_json = json.dumps(url)
+    state_json = json.dumps(state)
+    session_id_json = json.dumps(session_id)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Telegram Login</title>
+</head>
+<body>
+  <pre>Redirecting to Telegram...</pre>
+  <script>
+    sessionStorage.setItem("telegram_auth_state", {state_json});
+    localStorage.setItem("telegram_auth_state", {state_json});
+    if ({session_id_json} !== null) {{
+      sessionStorage.setItem("telegram_auth_session_id", {session_id_json});
+      localStorage.setItem("telegram_auth_session_id", {session_id_json});
+    }} else {{
+      sessionStorage.removeItem("telegram_auth_session_id");
+      localStorage.removeItem("telegram_auth_session_id");
+    }}
+    window.location.replace({url_json});
+  </script>
+</body>
+</html>
+"""
+
+
+def _login_page_html(
+    *,
+    client_id: str,
+    nonce: str,
+    origin: str,
+    session_id: str | None,
+) -> str:
+    session_hint = (
+        f"Use X-Session-ID: {session_id} on /chat/*."
+        if session_id is not None
+        else "Use the returned Bearer token on /chat/*."
+    )
+    client_id_json = json.dumps(client_id)
+    nonce_json = json.dumps(nonce)
+    origin_json = json.dumps(origin)
+    session_id_json = json.dumps(session_id)
+    session_hint_json = json.dumps(session_hint)
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Telegram Login</title>
+  <style>
+    body {{ font-family: sans-serif; margin: 2rem; line-height: 1.5; }}
+    button {{ padding: 0.7rem 1rem; cursor: pointer; }}
+    pre {{ white-space: pre-wrap; word-break: break-word; }}
+  </style>
+</head>
+<body>
+  <h1>Sign in with Telegram</h1>
+  <p>This authenticates your API session. Chat operations remain bot-scoped.</p>
+  <button id="telegram-login" type="button">Continue with Telegram</button>
+  <pre id="status"></pre>
+  <script src="https://oauth.telegram.org/js/telegram-login.js?3"></script>
+  <script>
+    const clientId = Number({client_id_json});
+    const nonce = {nonce_json};
+    const origin = {origin_json};
+    const launchedSessionId = {session_id_json};
+    const sessionHint = {session_hint_json};
+    const statusBox = document.getElementById("status");
+    const fragment = new URLSearchParams(window.location.hash.slice(1));
+    const authResult = fragment.get("tgAuthResult");
+    const storedState = sessionStorage.getItem("telegram_auth_state") ||
+      localStorage.getItem("telegram_auth_state");
+    const storedSessionId = sessionStorage.getItem("telegram_auth_session_id") ||
+      localStorage.getItem("telegram_auth_session_id");
+    const state = authResult ? storedState : nonce;
+    const sessionId = authResult ? storedSessionId : launchedSessionId;
+    if (!authResult) {{
+      sessionStorage.setItem("telegram_auth_state", nonce);
+      localStorage.setItem("telegram_auth_state", nonce);
+      if (launchedSessionId !== null) {{
+        sessionStorage.setItem("telegram_auth_session_id", launchedSessionId);
+        localStorage.setItem("telegram_auth_session_id", launchedSessionId);
+      }}
+    }}
+    function show(message) {{
+      statusBox.textContent = message;
+    }}
+    function telegramAuthUrl() {{
+      const params = new URLSearchParams({{
+        response_type: "post_message",
+        client_id: String(clientId),
+        redirect_uri: origin + "/",
+        scope: "openid profile telegram:bot_access",
+        nonce,
+        origin,
+      }});
+      return "https://oauth.telegram.org/auth?" + params.toString();
+    }}
+    function authResultFrom(data) {{
+      const bytes = new TextEncoder().encode(JSON.stringify(data));
+      let raw = "";
+      bytes.forEach((byte) => {{
+        raw += String.fromCharCode(byte);
+      }});
+      return btoa(raw).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+    }}
+    async function postJson(url, data) {{
+      const response = await fetch(url, {{
+        method: "POST",
+        headers: {{"content-type": "application/json"}},
+        body: JSON.stringify(data),
+      }});
+      const body = await response.json();
+      if (!response.ok) {{
+        show(body.detail || "Login failed.");
+        return false;
+      }}
+      sessionStorage.removeItem("telegram_auth_state");
+      sessionStorage.removeItem("telegram_auth_session_id");
+      localStorage.removeItem("telegram_auth_state");
+      localStorage.removeItem("telegram_auth_session_id");
+      show("Login complete. " + sessionHint);
+      return true;
+    }}
+    async function finishLogin(data) {{
+      if (!data || data.error) {{
+        if (data && data.error === "missing id_token") {{
+          window.location.assign(telegramAuthUrl());
+          return;
+        }}
+        show(data && data.error ? data.error : "Telegram login was cancelled.");
+        return;
+      }}
+      if (data.id_token) {{
+        await postJson("/auth/callback", {{id_token: data.id_token, nonce}});
+        return;
+      }}
+      if (data.hash) {{
+        await postJson("/auth/telegram-login", {{
+          auth_result: authResultFrom(data),
+          state,
+          session_id: sessionId,
+        }});
+        return;
+      }}
+      show("Telegram did not return an id_token or signed login payload.");
+    }}
+    if (authResult) {{
+      postJson("/auth/telegram-login", {{
+        auth_result: authResult,
+        state,
+        session_id: sessionId,
+      }}).then((completed) => {{
+        if (completed && window.name === "telegram_auth_popup") {{
+          window.close();
+        }}
+      }});
+    }} else {{
+      Telegram.Login.init({{
+        client_id: clientId,
+        request_access: ["write"],
+        nonce,
+      }}, finishLogin);
+      document.getElementById("telegram-login").addEventListener("click", () => {{
+      const openPopup = window.open;
+      window.open = function(url, target, features) {{
+        if (
+          typeof url === "string" &&
+          url.startsWith("https://oauth.telegram.org/auth?")
+        ) {{
+          const authUrl = new URL(url);
+          authUrl.searchParams.set("origin", origin);
+          authUrl.searchParams.set("redirect_uri", origin + "/");
+          url = authUrl.toString();
+          target = "telegram_auth_popup";
+        }}
+        return openPopup.call(window, url, target, features);
+      }};
+      try {{
+        Telegram.Login.open(finishLogin);
+      }} finally {{
+        window.open = openPopup;
+      }}
+      }});
+    }}
+  </script>
+</body>
+</html>
+"""

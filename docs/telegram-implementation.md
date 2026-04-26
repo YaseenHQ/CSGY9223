@@ -5,89 +5,99 @@
 - `components/telegram_client_impl/pyproject.toml`
 - `components/telegram_client_impl/README.md`
 - `components/telegram_client_impl/src/telegram_client_impl/*.py`
+- `components/chat_client_service/src/chat_client_service/*.py`
 
 ## Injection Behavior
 
-When `telegram_client_impl` is imported, it registers implementation factories into
-`chat_client_api`:
+When `telegram_client_impl` is imported, it registers an implementation factory
+into `chat_client_api` through `register_client(get_client_impl)`.
 
-- `chat_client_api.get_client`
-- `chat_client_api.get_message`
+That keeps the shared API contract unchanged while letting this branch swap the
+Telegram backend from Telethon to the Bot API.
 
-This allows consumers to code against the interface while swapping implementation
-by import.
+## Authentication
 
-## Authentication and Runtime Mode
+This branch keeps the Bot API runtime migration but restores the stronger auth
+model from the hardened experiment branch: Telegram OIDC / Login plus a local
+service session.
 
-Configuration is read from environment variables:
+The Bot API switch is an implementation detail that supports the deployed
+service auth model. The shared `chat_client_api` contract remains the public
+integration surface.
 
-- `TELEGRAM_API_ID`
-- `TELEGRAM_API_HASH`
+- `POST /auth/sessions` creates a pending service session
+- `GET /auth/login?flow=page` serves the hosted Telegram Login page
+- `GET /auth/login?flow=code` starts Telegram OIDC Authorization Code Flow with PKCE
+- `GET /auth/login/config` supports Telegram's Login library for custom frontends
+- `GET /auth/callback` completes OIDC code flow
+- `POST /auth/callback` verifies Telegram Login library `id_token`
+- `POST /auth/telegram-login` verifies signed `tgAuthResult` payloads
+- `GET /auth/sessions/{session_id}` reports whether browser login completed
+- `X-Session-ID` and the browser cookie both identify the same local service session
+
+Required service variables:
+
 - `TELEGRAM_BOT_TOKEN`
-- `TELEGRAM_SESSION_NAME`
-- `TELEGRAM_SESSION_STRING`
+- `SERVICE_BASE_URL`
+- `CHAT_CLIENT_STORE_PATH`
 
-No credentials are hardcoded.
+Optional variables:
 
-`TELEGRAM_SESSION_STRING` should be preferred in deployed service environments.
-Telethon session files are local SQLite files; Render and other ephemeral hosts
-should use a string session instead of relying on a file created in the working
-directory.
+- `APP_SESSION_SECRET` (optional signing override; defaults to bot token)
+- `APP_SESSION_TTL_SECONDS`
+- `TELEGRAM_OIDC_CLIENT_ID` (optional override; otherwise derived from the bot id)
+- `TELEGRAM_OIDC_CLIENT_SECRET` (optional override only for explicit code flow)
+- `TELEGRAM_UPDATE_MODE`
+- `TELEGRAM_POLL_INTERVAL_SECONDS`
+- `TELEGRAM_WEBHOOK_SECRET`
+- `TELEGRAM_BOT_API_BASE_URL`
 
-## Bot Token vs User Session
+API consumers do not need Telegram API ID/hash values or user session strings.
+Telegram documents both supported login paths in
+[Log In With Telegram](https://core.telegram.org/bots/telegram-login).
 
-Telegram bot auth is not equivalent to a user session:
+## Bot-Scoped Chat Behavior
 
-| Credential | Works for | Does not reliably work for |
-|---|---|---|
-| Bot token | Login Widget HMAC verification; sending messages where the bot has access | Reading arbitrary history with `GetHistoryRequest`; listing user dialogs with `GetDialogsRequest` |
-| User session string | Sending messages, reading message history, listing dialogs visible to that user | Login Widget HMAC verification |
+Bot API does not expose arbitrary user Telegram history. Therefore:
 
-The deployed service needs both credentials: bot token for web login/Bearer
-signing, user session string for the Telegram chat backend. Bot fallback is
-restricted to send operations; read/list requires a user session.
+- `POST /chat/messages` sends through the service bot
+- `GET /chat/messages` returns stored bot-observed or bot-sent messages
+- `GET /chat/messages/{message_id}` returns one stored message by opaque id
+- `GET /chat/channels` returns chats known to the bot
+- `GET /chat/channels/{channel_id}` returns one known chat
+- `DELETE /chat/messages/{message_id}` deletes when Telegram allows it
 
-## Chat Targets
+`channel_id="me"` means the logged-in user's direct chat with the bot.
+If an example uses `OSSHWBOTTEST`, replace it with any group or channel where
+the bot is present.
 
-Use `channel_id="me"` for Saved Messages only. For any group/channel usage,
-first list dialogs with `get_channels()` or the service's `GET /chat/channels`,
-then use the returned `Channel.channel_id`.
+## Update Ingestion
 
-This example uses `OSSHWBOTTEST`; replace it with any group or channel of your
-choice:
+Telegram bot updates arrive in one of two mutually exclusive ways:
 
-```python
-import telegram_client_impl
-from chat_client_api import get_client
+- polling with `getUpdates`
+- webhook delivery to `/telegram/webhook`
 
-client = get_client()
-target = next(ch for ch in client.get_channels() if ch.name == "OSSHWBOTTEST")
+Telegram only stores unconsumed updates for a limited time, so this service does
+not treat Bot API updates as durable history. Reads come from local SQLite state
+populated by messages sent through the service, polling, or webhook delivery.
 
-client.send_message(channel_id=target.channel_id, text="hello group")
-latest = client.get_messages(channel_id=target.channel_id, limit=1)[0]
-print(latest.text)
-```
+For Render, the recommended path is:
 
-If a target group does not appear in `get_channels()`, the Telegram user behind
-`TELEGRAM_SESSION_STRING` has not joined it, the session is invalid, or the
-service is running in bot-token-only mode.
+- `TELEGRAM_UPDATE_MODE=polling`
+- persistent disk mounted at `/var/data`
+- `CHAT_CLIENT_STORE_PATH=/var/data/chat_client.sqlite3`
 
-## Generating a User Session String
+The service starts a singleton background poller and stores observed messages in
+SQLite. `/chat/*` then reads from that stored bot state.
 
-Use the Telegram API ID/hash from [Telegram API development tools](https://core.telegram.org/api/obtaining_api_id),
-then generate a Telethon string session using the account that should read/send
-messages. Telethon documents this flow under [String Sessions](https://docs.telethon.dev/en/stable/concepts/sessions.html#string-sessions).
+Webhook mode is still supported. If `TELEGRAM_WEBHOOK_SECRET` is set, the
+service verifies `X-Telegram-Bot-Api-Secret-Token` before recording updates.
 
-```python
-from telethon.sync import TelegramClient
-from telethon.sessions import StringSession
+## Access Checks
 
-api_id = int(input("api_id: "))
-api_hash = input("api_hash: ")
-
-with TelegramClient(StringSession(), api_id, api_hash) as client:
-    print(client.session.save())
-```
-
-Paste the complete output into Render as `TELEGRAM_SESSION_STRING`. Do not paste
-a screenshot preview; the value is long and must not be truncated.
+The service checks chat access with Telegram `getChatMember` when local access
+state is missing. This is authoritative for groups and supergroups where the bot
+can query membership. For channels, Telegram may require the bot to be an
+administrator before it can query non-admin member status; in that case the
+service denies access conservatively.

@@ -32,6 +32,7 @@ nav:
   - Getting Started: getting-started.md
   - API Reference: api-reference.md
   - Telegram Implementation: telegram-implementation.md
+  - Bot API OIDC Switch: design-botapi-oidc-switch.md
 
 markdown_extensions:
   - pymdownx.highlight:

@@ -1,351 +1,509 @@
-"""Unit tests for Telegram implementation behavior and validation."""
+"""Unit tests for Telegram Bot API implementation behavior and validation."""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+import json
+import logging
+from typing import TYPE_CHECKING
 
+import httpx
 import pytest
 
-from chat_client_api import Channel, Message
 from telegram_client_impl.client import TelegramClient, get_client_impl
 from telegram_client_impl.config import TelegramClientConfig
-from telegram_client_impl.errors import (
-    TelegramAuthError,
-    TelegramClientError,
-    TelegramMappingError,
-)
-from telegram_client_impl.mappers import to_channel, to_message
-from telegram_client_impl.opaque_ids import (
-    encode_telegram_message_id,
-    parse_telegram_message_id,
-)
-from telegram_client_impl.telethon_async import run_coroutine
+from telegram_client_impl.errors import TelegramAuthError, TelegramClientError
+from telegram_client_impl.store import get_store, record_update
 
-EXPECTED_MESSAGE_COUNT = 2
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 
-class _AsyncIter:
-    """Minimal async iterator for mocking ``iter_messages``."""
-
-    def __init__(self, items: list[object]) -> None:
-        self._it = iter(items)
-
-    def __aiter__(self) -> _AsyncIter:
-        return self
-
-    async def __anext__(self) -> object:
-        try:
-            return next(self._it)
-        except StopIteration as exc:
-            raise StopAsyncIteration from exc
+@pytest.fixture(autouse=True)
+def isolated_store(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
+    """Use an in-memory store for Bot API implementation tests."""
+    monkeypatch.setenv("CHAT_CLIENT_STORE_PATH", ":memory:")
+    get_store().clear()
+    yield
+    get_store().clear()
 
 
-def _client() -> TelegramClient:
-    """Build a client with minimal, non-empty config."""
-    config = TelegramClientConfig(api_id="1", api_hash="hash", bot_token="token")
-    return TelegramClient(config=config)
-
-
-def test_client_methods_delegate_to_telethon() -> None:
-    """Client methods call through to the Telethon client and mappers."""
-    client = _client()
-
-    with (
-        patch.object(client, "_ensure_connected") as mock_ensure,
-        patch(
-            "telegram_client_impl.client.to_message",
-        ) as mock_to_message,
-        patch(
-            "telegram_client_impl.client.to_channel",
-        ) as mock_to_channel,
-    ):
-        # Arrange Telethon client on the instance.
-        tele_client = MagicMock()
-        tele_client.delete_messages = AsyncMock()
-        client._client = tele_client
-        target = object()
-        client._entity_cache["123"] = target
-
-        # send_message
-        tele_client.send_message = AsyncMock(return_value=object())
-        mock_msg = MagicMock(spec=Message)
-        mock_to_message.return_value = mock_msg
-        result = client.send_message(channel_id="123", text="hello")
-        mock_ensure.assert_called()
-        tele_client.send_message.assert_called_with(target, "hello")
-        assert result is mock_msg
-
-        # get_messages
-        tele_client.iter_messages.return_value = _AsyncIter([object(), object()])
-        mock_to_message.reset_mock()
-        messages = client.get_messages(
-            channel_id="123",
-            limit=EXPECTED_MESSAGE_COUNT,
-        )
-        tele_client.iter_messages.assert_called_with(
-            target,
-            limit=EXPECTED_MESSAGE_COUNT,
-        )
-        assert mock_to_message.call_count == EXPECTED_MESSAGE_COUNT
-        assert len(messages) == EXPECTED_MESSAGE_COUNT
-
-        # delete_message
-        tele_client.delete_messages.reset_mock()
-        client.delete_message(message_id="123:5")
-        tele_client.delete_messages.assert_called_with(target, [5])
-
-        # get_channels
-        tele_client.get_dialogs = AsyncMock(return_value=[object()])
-        mock_channel = MagicMock(spec=Channel)
-        mock_to_channel.return_value = mock_channel
-        channels = client.get_channels()
-        tele_client.get_dialogs.assert_called_once()
-        mock_to_channel.assert_called_once()
-        assert channels == [mock_channel]
-
-        # get_channel
-        client._entity_cache["99"] = object()
-        mock_to_channel.return_value = mock_channel
-        ch = client.get_channel("99")
-        assert ch is mock_channel
-
-        # get_message
-        tele_client.get_messages = AsyncMock(return_value=object())
-        mock_to_message.return_value = mock_msg
-        msg = client.get_message("123:7")
-        tele_client.get_messages.assert_called_with(target, ids=7)
-        assert msg is mock_msg
-
-
-def test_client_resolves_dialog_entity_for_operations() -> None:
-    """Bare IDs from listed dialogs are resolved back to Telethon entities."""
-    client = _client()
-
-    with patch.object(client, "_ensure_connected"):
-        entity = SimpleNamespace(id=123, title="Test Group", broadcast=False)
-        dialog = SimpleNamespace(entity=entity)
-        tele_client = MagicMock()
-        tele_client.get_dialogs = AsyncMock(return_value=[dialog])
-        tele_client.send_message = AsyncMock(return_value=object())
-        client._client = tele_client
-
-        with patch("telegram_client_impl.client.to_message") as mock_to_message:
-            mock_msg = MagicMock(spec=Message)
-            mock_to_message.return_value = mock_msg
-
-            result = client.send_message(channel_id="123", text="hello")
-
-        tele_client.get_dialogs.assert_called_once()
-        tele_client.send_message.assert_called_once_with(entity, "hello")
-        assert result is mock_msg
-
-
-def test_bot_mode_send_does_not_require_dialog_listing() -> None:
-    """Bot-token fallback remains send-only and avoids GetDialogsRequest."""
-    client = _client()
-
-    with patch.object(client, "_ensure_connected"):
-        tele_client = MagicMock()
-        tele_client.get_dialogs = AsyncMock(side_effect=AssertionError)
-        tele_client.send_message = AsyncMock(return_value=object())
-        client._client = tele_client
-        client._bot_mode = True
-
-        with patch("telegram_client_impl.client.to_message") as mock_to_message:
-            mock_msg = MagicMock(spec=Message)
-            mock_to_message.return_value = mock_msg
-
-            result = client.send_message(channel_id="123", text="hello")
-
-        tele_client.get_dialogs.assert_not_called()
-        tele_client.send_message.assert_called_once_with(123, "hello")
-        assert result is mock_msg
-
-
-def test_bot_mode_read_operations_fail_with_clear_error() -> None:
-    """Read/list operations fail before Telethon bot-only API restrictions."""
-    client = _client()
-    client._bot_mode = True
-
-    with patch.object(client, "_ensure_connected"):
-        with pytest.raises(TelegramClientError, match="bot-token mode"):
-            client.get_channels()
-        with pytest.raises(TelegramClientError, match="bot-token mode"):
-            client.get_messages(channel_id="123")
-
-
-def test_invalid_session_string_does_not_fallback_to_bot() -> None:
-    """A configured user session must be valid; bot fallback is send-only mode."""
-    config = TelegramClientConfig(
-        api_id="1",
-        api_hash="hash",
-        bot_token="token",
-        session_string="invalid",
+def _client(handler: httpx.MockTransport) -> TelegramClient:
+    """Build a Bot API client using a fake HTTP transport."""
+    http_client = httpx.Client(
+        base_url="https://api.telegram.org/bottoken",
+        transport=handler,
     )
-    client = TelegramClient(config=config)
-    tele_client = MagicMock()
-    tele_client.is_connected.return_value = True
-    tele_client.is_user_authorized = AsyncMock(return_value=False)
-    tele_client.sign_in = AsyncMock()
-    client._client = tele_client
+    config = TelegramClientConfig(bot_token="token")
+    return TelegramClient(config=config, http_client=http_client)
 
-    with pytest.raises(TelegramAuthError, match="TELEGRAM_SESSION_STRING"):
-        run_coroutine(client._async_start_session())
 
-    tele_client.sign_in.assert_not_called()
+def _raw_message(*, message_id: int = 5, text: str = "hello") -> dict[str, object]:
+    """Build a Bot API message fixture."""
+    return {
+        "message_id": message_id,
+        "from": {"id": 100, "first_name": "Alice"},
+        "chat": {"id": 123, "title": "OSSHWBOTTEST", "type": "group"},
+        "date": 1_800_000_000,
+        "text": text,
+    }
+
+
+def test_client_methods_use_bot_api_and_store_observed_state() -> None:
+    """Client methods call Bot API and read bot-observed local state."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/getWebhookInfo"):
+            return httpx.Response(
+                200,
+                json={"ok": True, "result": {"url": "https://example.com/hook"}},
+                request=request,
+            )
+        if request.url.path.endswith("/sendMessage"):
+            return httpx.Response(
+                200,
+                json={"ok": True, "result": _raw_message(message_id=5)},
+                request=request,
+            )
+        if request.url.path.endswith("/deleteMessage"):
+            return httpx.Response(
+                200,
+                json={"ok": True, "result": True},
+                request=request,
+            )
+        return httpx.Response(404, json={"ok": False}, request=request)
+
+    client = _client(httpx.MockTransport(handler))
+
+    sent = client.send_message(channel_id="123", text="hello")
+    assert sent.message_id == "123:5"
+    assert sent.channel == "123"
+
+    messages = client.get_messages("123", limit=2)
+    assert len(messages) == 1
+    assert messages[0].text == "hello"
+    assert messages[0].message_id == "123:5"
+    assert client.get_message("123:5").text == "hello"
+
+    channels = client.get_channels()
+    assert len(channels) == 1
+    assert channels[0].name == "OSSHWBOTTEST"
+    assert channels[0].channel_id == "123"
+    assert channels[0].channel_type == "group"
+    assert client.get_channel("123").name == "OSSHWBOTTEST"
+
+    client.delete_message(message_id="123:5")
+    assert client.get_messages("123") == []
+
+    methods = [request.url.path.rsplit("/", 1)[-1] for request in requests]
+    assert "sendMessage" in methods
+    assert "deleteMessage" in methods
+
+
+def test_client_requires_bot_token() -> None:
+    """Bot API client fails fast without service-owned bot credentials."""
+    client = TelegramClient(config=TelegramClientConfig(bot_token=None))
+
+    with pytest.raises(TelegramAuthError, match="TELEGRAM_BOT_TOKEN"):
+        client.get_channels()
+
+
+def test_get_channel_fetches_chat_metadata_on_cache_miss() -> None:
+    """get_channel can resolve a Telegram chat before any updates are observed."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/getWebhookInfo"):
+            return httpx.Response(
+                200,
+                json={"ok": True, "result": {"url": "https://example.com/hook"}},
+                request=request,
+            )
+        if request.url.path.endswith("/getChat"):
+            return httpx.Response(
+                200,
+                json={
+                    "ok": True,
+                    "result": {
+                        "id": 123,
+                        "title": "OSSHWBOTTEST",
+                        "type": "supergroup",
+                    },
+                },
+                request=request,
+            )
+        return httpx.Response(404, json={"ok": False}, request=request)
+
+    client = _client(httpx.MockTransport(handler))
+
+    channel = client.get_channel("123")
+    cached = client.get_channel("123")
+
+    assert channel.channel_id == "123"
+    assert channel.name == "OSSHWBOTTEST"
+    assert channel.channel_type == "supergroup"
+    assert cached == channel
+    methods = [request.url.path.rsplit("/", 1)[-1] for request in requests]
+    assert methods.count("getChat") == 1
+
+
+def test_bot_api_error_preserves_response_metadata() -> None:
+    """Bot API error_code and parameters remain available to callers."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={
+                "ok": False,
+                "error_code": 429,
+                "description": "Too Many Requests",
+                "parameters": {"retry_after": 6},
+            },
+            request=request,
+        )
+
+    client = _client(httpx.MockTransport(handler))
+
+    with pytest.raises(TelegramClientError) as exc_info:
+        client.send_message(channel_id="123", text="hello")
+
+    assert exc_info.value.method == "sendMessage"
+    assert exc_info.value.error_code == 429
+    assert exc_info.value.parameters == {"retry_after": 6}
+
+
+def test_bot_api_429_retries_once_when_retry_after_is_small(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Small Telegram retry_after values trigger one bounded retry."""
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(
+                429,
+                json={
+                    "ok": False,
+                    "error_code": 429,
+                    "description": "Too Many Requests",
+                    "parameters": {"retry_after": 1},
+                },
+                request=request,
+            )
+        return httpx.Response(
+            200,
+            json={"ok": True, "result": _raw_message(message_id=7)},
+            request=request,
+        )
+
+    sleep_calls: list[int] = []
+    monkeypatch.setattr("telegram_client_impl.client.time.sleep", sleep_calls.append)
+    client = _client(httpx.MockTransport(handler))
+
+    sent = client.send_message(channel_id="123", text="hello")
+
+    assert sent.message_id == "123:7"
+    assert calls == 2
+    assert sleep_calls == [1]
+
+
+def test_transport_errors_do_not_expose_bot_token_in_error_message() -> None:
+    """Transport failures should not leak the Bot API token in exception text."""
+    timeout_message = "read timed out"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout(timeout_message, request=request)
+
+    client = _client(httpx.MockTransport(handler))
+
+    with pytest.raises(TelegramClientError) as exc_info:
+        client.send_message(channel_id="123", text="hello")
+
+    assert exc_info.value.method == "sendMessage"
+    assert "bottoken" not in str(exc_info.value)
+    assert "sendMessage" in str(exc_info.value)
+
+
+def test_bot_api_non_object_result_raises_client_error() -> None:
+    """SendMessage requires a message object in the Bot API result."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True, "result": True}, request=request)
+
+    client = _client(httpx.MockTransport(handler))
+
+    with pytest.raises(TelegramClientError, match="missing message"):
+        client.send_message(channel_id="123", text="hello")
+
+
+def test_webhook_update_records_message_for_reads() -> None:
+    """Webhook-style updates populate the bot-observed read model."""
+    record_update({"update_id": 1, "message": _raw_message(message_id=8, text="seen")})
+
+    client = _client(
+        httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={"ok": True, "result": {"url": "https://example.com/hook"}},
+                request=request,
+            )
+        )
+    )
+    messages = client.get_messages("123", limit=1)
+    channels = client.get_channels()
+
+    assert messages[0].message_id == "123:8"
+    assert messages[0].text == "seen"
+    assert channels[0].channel_id == "123"
+
+
+def test_get_messages_cursor_returns_newer_messages() -> None:
+    """Cursor reads let consumers process only newly observed messages."""
+    client = _client(
+        httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={"ok": True, "result": {"url": "https://example.com/hook"}},
+                request=request,
+            )
+        )
+    )
+
+    for message_id in (8, 9, 10):
+        record_update(
+            {
+                "update_id": message_id,
+                "message": _raw_message(
+                    message_id=message_id,
+                    text=f"seen {message_id}",
+                ),
+            }
+        )
+
+    messages = client.get_messages("123", limit=10, cursor="123:8")
+
+    assert [message.message_id for message in messages] == ["123:9", "123:10"]
+    assert [message.text for message in messages] == ["seen 9", "seen 10"]
+
+
+def test_client_polls_updates_when_webhook_is_not_configured() -> None:
+    """Reads can ingest pending Bot API updates when no webhook is active."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/getWebhookInfo"):
+            return httpx.Response(
+                200,
+                json={"ok": True, "result": {"url": ""}},
+                request=request,
+            )
+        if request.url.path.endswith("/getUpdates"):
+            return httpx.Response(
+                200,
+                json={
+                    "ok": True,
+                    "result": [
+                        {
+                            "update_id": 11,
+                            "message": _raw_message(message_id=9, text="polled"),
+                        }
+                    ],
+                },
+                request=request,
+            )
+        return httpx.Response(404, json={"ok": False}, request=request)
+
+    client = _client(httpx.MockTransport(handler))
+
+    messages = client.get_messages("123", limit=10)
+
+    assert messages[0].message_id == "123:9"
+    assert messages[0].text == "polled"
+    assert get_store().get_int_state(key="telegram_get_updates_offset") == 12
+    assert [request.url.path.rsplit("/", 1)[-1] for request in requests] == [
+        "getWebhookInfo",
+        "getUpdates",
+    ]
+    get_updates = requests[1]
+    assert json.loads(get_updates.content)["timeout"] == 0
+
+
+def test_client_skips_read_polling_when_background_poller_is_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Request-time reads do not race the service background poller."""
+    monkeypatch.setenv("TELEGRAM_UPDATE_MODE", "polling")
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500, json={"ok": False}, request=request)
+
+    client = _client(httpx.MockTransport(handler))
+
+    assert client.get_channels() == []
+    assert requests == []
+
+
+def test_forced_polling_still_fetches_updates_when_poller_is_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The background poller uses force=True to perform the actual getUpdates call."""
+    monkeypatch.setenv("TELEGRAM_UPDATE_MODE", "polling")
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path.endswith("/getWebhookInfo"):
+            return httpx.Response(
+                200,
+                json={"ok": True, "result": {"url": ""}},
+                request=request,
+            )
+        if request.url.path.endswith("/getUpdates"):
+            return httpx.Response(
+                200,
+                json={
+                    "ok": True,
+                    "result": [
+                        {
+                            "update_id": 11,
+                            "message": _raw_message(message_id=9, text="polled"),
+                        }
+                    ],
+                },
+                request=request,
+            )
+        return httpx.Response(404, json={"ok": False}, request=request)
+
+    client = _client(httpx.MockTransport(handler))
+
+    client.sync_updates(force=True)
+
+    assert get_store().list_messages(channel_id="123", max_results=1)[0].text == (
+        "polled"
+    )
+    assert [request.url.path.rsplit("/", 1)[-1] for request in requests] == [
+        "getWebhookInfo",
+        "getUpdates",
+    ]
+    get_updates = requests[1]
+    assert json.loads(get_updates.content)["timeout"] == 3
+
+
+def test_polling_errors_are_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """Polling failures are visible instead of being silently dropped."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/getWebhookInfo"):
+            return httpx.Response(
+                200,
+                json={"ok": True, "result": {"url": ""}},
+                request=request,
+            )
+        return httpx.Response(
+            429,
+            json={"ok": False, "error_code": 429, "description": "Too Many Requests"},
+            request=request,
+        )
+
+    caplog.set_level(logging.WARNING, logger="telegram_client_impl.client")
+    client = _client(httpx.MockTransport(handler))
+
+    assert client.get_channels() == []
+    assert "Telegram getUpdates failed" in caplog.text
+
+
+def test_webhook_records_bot_membership_chat() -> None:
+    """Bot membership updates make newly added chats visible before messages."""
+    record_update(
+        {
+            "update_id": 1,
+            "my_chat_member": {
+                "from": {"id": 100},
+                "chat": {"id": -123, "title": "OSSHWBOTTEST", "type": "group"},
+                "date": 1_800_000_000,
+                "old_chat_member": {"status": "left"},
+                "new_chat_member": {"status": "member"},
+            },
+        }
+    )
+
+    channels = get_store().list_channels()
+
+    assert channels[0].channel_id == "-123"
+    assert channels[0].name == "OSSHWBOTTEST"
+    assert get_store().user_can_access(telegram_id="100", channel_id="-123") is True
+
+
+def test_bot_membership_removal_revokes_cached_chat_access() -> None:
+    """When the bot leaves a chat, cached access to that chat is removed."""
+    get_store().grant_access(telegram_id="100", channel_id="-123")
+
+    record_update(
+        {
+            "update_id": 1,
+            "my_chat_member": {
+                "from": {"id": 100},
+                "chat": {"id": -123, "title": "OSSHWBOTTEST", "type": "group"},
+                "date": 1_800_000_000,
+                "old_chat_member": {"status": "member"},
+                "new_chat_member": {"status": "kicked"},
+            },
+        }
+    )
+
+    assert get_store().user_can_access(telegram_id="100", channel_id="-123") is False
+
+
+def test_client_can_check_membership_with_bot_api() -> None:
+    """Access checks use Bot API getChatMember when local state is missing."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/getChatMember")
+        return httpx.Response(
+            200,
+            json={"ok": True, "result": {"status": "member"}},
+            request=request,
+        )
+
+    client = _client(httpx.MockTransport(handler))
+
+    assert client.user_can_access_channel(user_id="100", channel_id="123") is True
+    assert (
+        client.user_can_access_channel(user_id="not-numeric", channel_id="123") is False
+    )
 
 
 def test_client_input_validation() -> None:
-    """Input guards execute before scaffold exceptions."""
-    client = _client()
+    """Input guards execute before Bot API operations."""
+    client = TelegramClient(config=TelegramClientConfig(bot_token="token"))
 
     with pytest.raises(ValueError, match="channel_id must be non-empty"):
         client.send_message(channel_id="", text="hello")
+    with pytest.raises(ValueError, match="text must be <= 4096 characters"):
+        client.send_message(channel_id="ch-1", text="x" * 4097)
     with pytest.raises(ValueError, match="limit must be > 0"):
         client.get_messages(channel_id="ch-1", limit=0)
     with pytest.raises(ValueError, match="message_id must be non-empty"):
         client.delete_message(message_id="")
-    with pytest.raises(ValueError, match="Invalid message_id format"):
-        client.delete_message(message_id="no-separator")
-
-
-def test_opaque_message_id_helpers() -> None:
-    """Opaque ids use chat_id:telegram_message_id with split(':', 1) semantics."""
-    encoded = encode_telegram_message_id(chat_id="-100", telegram_message_id=42)
-    assert encoded == "-100:42"
-    assert parse_telegram_message_id("-100:42") == (-100, 42)
-    with pytest.raises(ValueError, match="Invalid message_id format"):
-        parse_telegram_message_id("nocolon")
-    with pytest.raises(ValueError, match="must be non-empty"):
-        parse_telegram_message_id("")
-    with pytest.raises(ValueError, match="empty chat_id"):
-        parse_telegram_message_id(":1")
-    with pytest.raises(ValueError, match="must be integers"):
-        parse_telegram_message_id("x:1")
-    with pytest.raises(ValueError, match="chat_id must be non-empty"):
-        encode_telegram_message_id(chat_id="", telegram_message_id=1)
-
-
-def test_get_channel_not_found_wraps_errors() -> None:
-    """get_channel raises ValueError when get_entity fails."""
-    client = _client()
-    tele = MagicMock()
-    tele.get_dialogs = AsyncMock(return_value=[])
-    tele.get_entity = AsyncMock(side_effect=OSError("network"))
-    with (
-        patch.object(client, "_ensure_connected"),
-        patch.object(client, "_get_client", return_value=tele),
-        pytest.raises(ValueError, match="Channel not found"),
-    ):
-        client.get_channel("99")
-
-
-def test_get_message_not_found_variants() -> None:
-    """get_message raises ValueError when Telethon returns no message."""
-    client = _client()
-    tele = MagicMock()
-    target = object()
-    client._entity_cache["1"] = target
-    with (
-        patch.object(client, "_ensure_connected"),
-        patch.object(
-            client,
-            "_get_client",
-            return_value=tele,
-        ),
-    ):
-        tele.get_messages = AsyncMock(return_value=[])
-        with pytest.raises(ValueError, match="Message not found"):
-            client.get_message("1:2")
-
-        tele.get_messages = AsyncMock(return_value=None)
-        with pytest.raises(ValueError, match="Message not found"):
-            client.get_message("1:2")
-
-        tele.get_messages = AsyncMock(return_value=[None])
-        with pytest.raises(ValueError, match="Message not found"):
-            client.get_message("1:2")
-
-
-def test_mapper_validation_and_errors() -> None:
-    """Mappers validate inputs and raise mapping errors for unsupported types."""
-    with pytest.raises(ValueError, match="raw_channel cannot be None"):
-        to_channel(None)
-    with pytest.raises(ValueError, match="raw_message cannot be None"):
-        to_message(None)
-    with pytest.raises(TelegramMappingError):
-        to_channel(object())
-    with pytest.raises(TelegramMappingError):
-        to_message(object())
-
-
-def test_to_message_rejects_unresolved_peer() -> None:
-    """Do not emit opaque ids with an empty chat segment (parser would reject them)."""
-    peer = SimpleNamespace(channel_id=None, chat_id=None, user_id=None)
-    raw_message = SimpleNamespace(
-        id=1,
-        sender_id=1,
-        peer_id=peer,
-        date=datetime(2024, 1, 1, tzinfo=UTC),
-        message="x",
-    )
-    with pytest.raises(TelegramMappingError, match="no channel_id"):
-        to_message(raw_message)
-
-
-def test_mapper_positive_channel_and_message() -> None:
-    """Mappers convert Telethon-like objects into shared dataclasses."""
-    # Fake Telethon channel entity via SimpleNamespace with required attributes.
-    channel_entity = SimpleNamespace(id=42, title="My Channel", broadcast=True)
-    channel = to_channel(channel_entity)
-    assert channel.channel_id == "42"
-    assert channel.name == "My Channel"
-    assert channel.channel_type == "channel"
-    assert channel.is_private is False
-
-    # Fake Telethon message-like object with a peer namespace.
-    peer = SimpleNamespace(channel_id=99, chat_id=None, user_id=None)
-    msg_date = datetime(2024, 1, 1, tzinfo=UTC)
-    raw_message = SimpleNamespace(
-        id=7,
-        sender_id=123,
-        peer_id=peer,
-        date=msg_date,
-        message="hi",
-    )
-
-    message = to_message(raw_message)
-    assert message.message_id == "99:7"
-    assert message.channel == "99"
-    assert message.sender == "123"
-    assert message.timestamp == msg_date.isoformat()
-    assert message.text == "hi"
+    with pytest.raises(ValueError, match="message_id must be formatted"):
+        client.delete_message(message_id="7")
 
 
 def test_get_client_impl_uses_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Factory reads environment variables through TelegramClientConfig.from_env."""
-    monkeypatch.setenv("TELEGRAM_API_ID", "123")
-    monkeypatch.setenv("TELEGRAM_API_HASH", "abc")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
-    monkeypatch.setenv("TELEGRAM_INTERACTIVE", "1")
+    monkeypatch.setenv("TELEGRAM_BOT_API_BASE_URL", "https://api.telegram.example")
 
-    client = get_client_impl()
+    client = get_client_impl(interactive=True)
 
     assert isinstance(client, TelegramClient)
+    assert client._config.bot_token == "token"
+    assert client._config.bot_api_base_url == "https://api.telegram.example"
     assert client._config.interactive is True
-
-
-def test_delete_message_valueerror_on_rpc_error() -> None:
-    """delete_message surfaces RPC failures as ValueError."""
-    client = _client()
-    tele = MagicMock()
-    tele.delete_messages = AsyncMock(side_effect=OSError("denied"))
-    client._entity_cache["1"] = object()
-    with (
-        patch.object(client, "_ensure_connected"),
-        patch.object(client, "_get_client", return_value=tele),
-        pytest.raises(ValueError, match="Failed to delete message"),
-    ):
-        client.delete_message("1:2")

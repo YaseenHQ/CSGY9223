@@ -1,10 +1,13 @@
 # Telegram Client Implementation
 
-This package implements the shared vertical [`chat_client_api`](https://github.com/HarshithKoriRaj/Shared-API) **`ChatClient`** for Telegram (Telethon).
+This package implements the shared
+[`chat_client_api`](https://github.com/HarshithKoriRaj/Shared-API)
+`ChatClient` for Telegram using the official Bot API.
 
 ## Registration
 
-On import, the package calls `register_client(get_client_impl)` so `from chat_client_api import get_client` returns a configured `TelegramClient`.
+On import, the package calls `register_client(get_client_impl)` so
+`from chat_client_api import get_client` returns a configured `TelegramClient`.
 
 ## Usage
 
@@ -15,31 +18,35 @@ from chat_client_api import get_client
 client = get_client()
 ```
 
-## Environment variables
+## Environment Variables
 
-- `TELEGRAM_API_ID`
-- `TELEGRAM_API_HASH`
-- `TELEGRAM_BOT_TOKEN` (send-only fallback when no user session is configured)
-- `TELEGRAM_SESSION_STRING` (preferred; required for read/list support)
-- `TELEGRAM_SESSION_NAME` (optional)
-- `TELEGRAM_INTERACTIVE` (optional; `1` / `true` / `yes` — see root README)
+Required:
 
-## Opaque message IDs
+- `TELEGRAM_BOT_TOKEN`
 
-Telegram exposes opaque IDs as `<chat_id>:<telegram_message_id>`. Use `split(":", 1)` when
-decoding. `get_message`, `delete_message`, and mapped `Message.message_id` values follow this
-format.
+Optional:
+
+- `TELEGRAM_BOT_API_BASE_URL`
+- `TELEGRAM_INTERACTIVE`
+- `CHAT_CLIENT_STORE_PATH`
+- `TELEGRAM_UPDATE_MODE`
+- `TELEGRAM_POLL_INTERVAL_SECONDS`
+
+## Opaque Message IDs
+
+Telegram message ids are exposed as `<chat_id>:<telegram_message_id>`.
+`get_message`, `delete_message`, and returned `Message.message_id` values use
+that format.
 
 ## Behavior
 
-- `get_messages` returns a `list[Message]`; optional API `cursor` is ignored.
-- `delete_message(message_id) -> None` raises `ValueError` on failure (per shared contract).
-- `get_channel` / `get_message` raise `ValueError` when the entity or message is missing.
-- `channel_id="me"` targets Saved Messages. For any group/channel, first call
-  `get_channels()` and use the returned `Channel.channel_id`.
+- `get_messages` returns bot-observed messages stored locally
+- `cursor=<last_message_id>` returns only newer stored messages
+- `get_channel` / `get_message` raise `ValueError` when missing
+- `delete_message(message_id)` expects the opaque id returned by reads/sends
+- `channel_id="me"` is handled at the service layer as the logged-in user's DM
+  with the bot
 
-Bot-token-only mode can send in some chats, but this implementation blocks
-read/list operations in bot mode because Telegram rejects the required history
-and dialog APIs. Use `TELEGRAM_SESSION_STRING` for full behavior.
-
-No secrets are hardcoded.
+This is not a full Telegram account client. It does not list arbitrary user
+dialogs or read arbitrary Telegram history. Reads are limited to messages the
+configured bot observed through polling, webhook delivery, or service sends.

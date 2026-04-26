@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Telegram implementation for shared chat_client_api"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["chat-client-api", "telethon"]
+dependencies = ["chat-client-api", "httpx>=0.27.0"]
 
 [build-system]
 requires = ["hatchling"]

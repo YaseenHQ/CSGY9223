@@ -27,6 +27,7 @@ dev = [
     "fastapi>=0.115.0",
     "pydantic>=2.8.0",
     "httpx>=0.27.0",
+    "pyjwt[crypto]>=2.8.0",
     "attrs>=23.0.0",
 ]
 docs = [
@@ -111,13 +112,6 @@ python_version = "3.12"
 strict = true
 # Shared vertical git dependency ships without py.typed (HW3 override).
 disable_error_code = ["import-untyped"]
-
-[[tool.mypy.overrides]]
-module = [
-    "telethon",
-    "telethon.*",
-]
-ignore_missing_imports = true
 
 # Untyped shared ``ChatClient`` base from git is treated as ``Any`` under strict mode.
 [[tool.mypy.overrides]]

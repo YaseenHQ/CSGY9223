@@ -45,17 +45,39 @@ import telegram_client_impl
 from chat_client_api import get_client
 ```
 
-The Telegram implementation uses Telethon. A deployed service needs a valid
-`TELEGRAM_SESSION_STRING` for read/list operations; bot-token-only mode can send
-in some chats but does not support the history/dialog APIs used by
-`get_messages` and `get_channels`.
+The Telegram implementation uses the official Bot API. A deployed service needs
+`TELEGRAM_BOT_TOKEN`, `SERVICE_BASE_URL`, and `CHAT_CLIENT_STORE_PATH`.
+`get_messages` and `get_channels` read bot-observed state stored locally through
+polling, webhook delivery, or service sends.
+
+Message objects use opaque `channel_id:message_id` identifiers so clients can
+pass them directly to `DELETE /chat/messages/{message_id}`.
 
 ## Service Compatibility
 
-The shared Python API uses `limit` for message retrieval. The generated service
-client previously used `max_results` on `GET /chat/messages`, so the FastAPI
-service accepts both query parameters and forwards the effective value to
+The shared Python API uses `limit` for message retrieval. OpenAPI clients may
+send `max_results` on `GET /chat/messages`, so the FastAPI service accepts both
+query parameters and forwards the effective value to
 `ChatClient.get_messages(..., limit=...)`.
+
+## Service Auth Surface
+
+`chat_client_service` keeps the `/chat/*` contract stable and adds Telegram
+login/session endpoints for HTTP consumers:
+
+- `POST /auth/sessions`
+- `GET /auth/login`
+- `GET /auth/login/config`
+- `GET /auth/callback`
+- `POST /auth/callback`
+- `POST /auth/telegram-login`
+- `POST /auth/verify` (compatibility bridge)
+- `GET /auth/sessions/{session_id}`
+- `DELETE /auth/sessions/{session_id}`
+- `GET /auth/me`
+
+The preferred adapter/client flow is `POST /auth/sessions` followed by
+`X-Session-ID` on `/chat/*`. Direct Bearer tokens are still accepted.
 ## Components
 
 Documentation for chat client components will be added here as the implementation develops.

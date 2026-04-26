@@ -1156,6 +1156,27 @@ def test_delete_message_delegates_to_client(mock_chat_client: Mock) -> None:
     mock_chat_client.delete_message.assert_called_once_with(message_id="ch-1:m-1")
 
 
+def test_me_channel_requires_telegram_identity(mock_chat_client: Mock) -> None:
+    """The explicit 'me' alias fails clearly if auth state lacks Telegram identity."""
+    def empty_claims() -> dict[str, str]:
+        return {}
+
+    app.dependency_overrides[get_current_claims] = empty_claims
+    try:
+        response = client.post(
+            "/chat/messages",
+            json={"channel_id": "me", "text": "hello"},
+        )
+    finally:
+        app.dependency_overrides.pop(get_current_claims, None)
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == (
+        "Authenticated session has no Telegram identity."
+    )
+    mock_chat_client.send_message.assert_not_called()
+
+
 def test_delete_message_resolves_simple_id_from_store(mock_chat_client: Mock) -> None:
     """DELETE /chat/messages/{id} still accepts unique simple ids from stored state."""
     get_store().upsert_channel(

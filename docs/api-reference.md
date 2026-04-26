@@ -60,6 +60,10 @@ send `max_results` on `GET /chat/messages`, so the FastAPI service accepts both
 query parameters and forwards the effective value to
 `ChatClient.get_messages(..., limit=...)`.
 
+`channel_id` remains explicit on the HTTP service surface. Use `"me"` to target
+the authenticated user's direct chat with the bot. The service does not default
+missing `channel_id` to `"me"`; callers should pass the alias explicitly.
+
 ## Service Auth Surface
 
 `chat_client_service` keeps the `/chat/*` contract stable and adds Telegram

@@ -209,7 +209,13 @@ def get_channel(
 
 def _resolve_channel_id(*, claims: dict[str, str], channel_id: str) -> str:
     if channel_id == "me":
-        return claims.get("telegram_id", "")
+        telegram_id = claims.get("telegram_id")
+        if not telegram_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authenticated session has no Telegram identity.",
+            )
+        return telegram_id
     return channel_id
 
 

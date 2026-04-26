@@ -114,6 +114,8 @@ This implementation is bot-scoped:
 - `GET /chat/messages` returns bot-observed or bot-sent messages stored locally
 - `GET /chat/channels` returns chats known to the bot
 - `channel_id="me"` means the logged-in user's direct chat with the bot
+- the service does not default a missing `channel_id` to `me`; callers should
+  pass `"me"` explicitly when they want the bot-user DM
 
 Message responses use opaque `channel_id:message_id` ids. Pass that value back
 to `DELETE /chat/messages/{message_id}` when deleting.

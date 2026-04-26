@@ -6,10 +6,6 @@ services:
     buildCommand: python -m pip install --upgrade pip && python -m pip install -r requirements-render.txt
     startCommand: python -m uvicorn chat_client_service.app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
-    disk:
-      name: chat-client-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
@@ -18,7 +14,7 @@ services:
       - key: APP_SESSION_TTL_SECONDS
         value: 3600
       - key: CHAT_CLIENT_STORE_PATH
-        value: /var/data/chat_client.sqlite3
+        value: /tmp/chat_client.sqlite3
       - key: TELEGRAM_UPDATE_MODE
         value: polling
       - key: TELEGRAM_POLL_INTERVAL_SECONDS

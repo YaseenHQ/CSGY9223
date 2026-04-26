@@ -438,6 +438,9 @@ def test_auth_login_serves_telegram_login_page() -> None:
     assert 'authUrl.searchParams.set("redirect_uri", origin + "/")' in response.text
     assert 'const origin = "https://example.com";' in response.text
     assert 'request_access: ["write"]' in response.text
+    assert 'window.addEventListener("message"' in response.text
+    assert "telegram-auth-complete" in response.text
+    assert "Browser session authenticated. Return to your API client." in response.text
 
 
 def test_auth_login_prefers_oidc_code_flow_when_secret_configured() -> None:
@@ -517,6 +520,8 @@ def test_root_serves_telegram_fragment_handler() -> None:
     assert "/auth/telegram-login" in response.text
     assert "sessionStorage.getItem" in response.text
     assert "localStorage.getItem" in response.text
+    assert "window.opener.postMessage" in response.text
+    assert 'type: "telegram-auth-complete"' in response.text
 
 
 def test_telegram_hash_login_authenticates_session() -> None:

@@ -112,8 +112,17 @@ def root() -> HTMLResponse:
         sessionStorage.removeItem("telegram_auth_session_id");
         localStorage.removeItem("telegram_auth_state");
         localStorage.removeItem("telegram_auth_session_id");
-        statusBox.textContent = "Login complete. Return to your API client.";
         window.history.replaceState(null, "", "/");
+        statusBox.textContent = "Login complete. Return to your API client.";
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage(
+            {
+              type: "telegram-auth-complete",
+              sessionId: sessionId,
+            },
+            window.location.origin
+          );
+        }
         if (window.name === "telegram_auth_popup") {
           window.close();
         }

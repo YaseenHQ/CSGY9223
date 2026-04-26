@@ -599,7 +599,7 @@ def _login_page_html(
     session_hint = (
         f"Use X-Session-ID: {session_id} on /chat/*."
         if session_id is not None
-        else "Use the returned Bearer token on /chat/*."
+        else "Browser session authenticated. Return to your API client."
     )
     client_id_json = json.dumps(client_id)
     nonce_json = json.dumps(nonce)
@@ -650,6 +650,16 @@ def _login_page_html(
     function show(message) {{
       statusBox.textContent = message;
     }}
+    window.addEventListener("message", (event) => {{
+      if (event.origin !== origin) {{
+        return;
+      }}
+      const data = event.data;
+      if (!data || data.type !== "telegram-auth-complete") {{
+        return;
+      }}
+      show("Login complete. " + sessionHint);
+    }});
     function telegramAuthUrl() {{
       const params = new URLSearchParams({{
         response_type: "post_message",

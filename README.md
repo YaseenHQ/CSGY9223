@@ -46,29 +46,93 @@ uv run mypy components tests
 This repository includes a Render Blueprint at `render.yaml` for
 `chat_client_service`.
 
-Required service-owned variables:
+Minimal working Render setup:
 
 - `TELEGRAM_BOT_TOKEN`
 - `SERVICE_BASE_URL`
-- `CHAT_CLIENT_STORE_PATH`
 
-Recommended Render values:
+That is the setup the experimental branch optimized for: set the bot token and
+base URL, then let the blueprint supply the rest.
 
-- `CHAT_CLIENT_STORE_PATH=/var/data/chat_client.sqlite3`
+The current `render.yaml` already provides defaults for:
+
 - `TELEGRAM_UPDATE_MODE=polling`
 - `TELEGRAM_POLL_INTERVAL_SECONDS=3`
+- `APP_SESSION_TTL_SECONDS=3600`
+- `CHAT_CLIENT_STORE_PATH=/tmp/chat_client.sqlite3`
+
+So on the free Render plan, you do not need to set those manually unless you
+are intentionally changing behavior.
+
+Important storage note:
+
+- the current free-plan blueprint uses `/tmp/chat_client.sqlite3`
+- that is writable on free Render, but it is ephemeral
+- if the service restarts or redeploys, auth sessions and stored bot-observed
+  messages can be lost
+
+If you move to a paid plan with a persistent disk, then switch to:
+
+- `CHAT_CLIENT_STORE_PATH=/var/data/chat_client.sqlite3`
 
 Optional variables:
 
-- `APP_SESSION_SECRET` (optional signing override; defaults to the bot token)
+- `APP_SESSION_SECRET` (signing override; defaults to the bot token)
 - `APP_SESSION_TTL_SECONDS`
 - `TELEGRAM_OIDC_CLIENT_ID` (optional override; otherwise derived from the bot id)
 - `TELEGRAM_OIDC_CLIENT_SECRET` (optional override only for explicit code flow)
 - `TELEGRAM_WEBHOOK_SECRET`
 - `TELEGRAM_BOT_API_BASE_URL`
 
-The Render blueprint in this branch also mounts a persistent disk at `/var/data`
-for bot-observed messages and auth session state.
+Do not set optional variables unless you actually need them. The more you
+change away from the minimal working setup, the more ways there are to drift
+from the proven deployment path.
+
+## BotFather Setup
+
+Before deploying, create and configure the Telegram bot itself.
+
+Minimum setup:
+
+1. Open [@BotFather](https://t.me/BotFather)
+2. Run `/newbot`
+3. Choose the bot name and username
+4. Copy the generated token into `TELEGRAM_BOT_TOKEN`
+5. Open the bot in Telegram and verify the username shown by BotFather matches
+   the bot you intend to use for this service
+
+Optional but recommended:
+
+- set the bot description and about text in BotFather so users know what they
+  are authenticating against
+- set the bot commands if you want a cleaner Telegram UX
+
+Privacy mode:
+
+- private user-to-bot DMs do **not** require disabling privacy mode
+- group-message visibility **does** depend on privacy mode
+
+If you want the bot to observe ordinary group messages instead of only commands,
+replies, and messages explicitly directed at the bot, disable privacy mode in
+BotFather:
+
+1. Open [@BotFather](https://t.me/BotFather)
+2. Run `/setprivacy`
+3. Select your bot
+4. Choose `Disable`
+
+Equivalent UI path in BotFather:
+
+1. `/start`
+2. select the bot
+3. `Bot Settings`
+4. `Group Privacy`
+5. turn it off
+
+Telegram documents this behavior in the Bots FAQ and Bot Features pages:
+
+- [What messages will my bot get?](https://core.telegram.org/bots/faq)
+- [Privacy Mode](https://core.telegram.org/bots/features)
 
 ## Telegram Service Semantics
 

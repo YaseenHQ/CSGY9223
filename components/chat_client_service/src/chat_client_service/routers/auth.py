@@ -42,6 +42,7 @@ from chat_client_service.oidc import (
     complete_telegram_hash_login,
     decode_app_token,
 )
+from telegram_client_impl.client import get_bot_login_target
 from telegram_client_impl.store import StoredChannel, get_store
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -104,6 +105,7 @@ def create_auth_session(
 ) -> AuthSessionResponse:
     """Create a pending service auth session for adapter clients."""
     session_id = secrets.token_urlsafe(24)
+    bot_username, bot_start_url = _bot_login_target()
     get_store().create_auth_session(
         session_id=session_id,
         created_at=int(time.time()),
@@ -113,6 +115,8 @@ def create_auth_session(
         authenticated=False,
         login_url=_session_login_url(config=config, session_id=session_id),
         status_url=_session_status_url(config=config, session_id=session_id),
+        bot_username=bot_username,
+        bot_start_url=bot_start_url,
     )
 
 
@@ -136,12 +140,14 @@ def auth_login(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
+    bot_username, bot_start_url = _bot_login_target()
     response = HTMLResponse(
         content=_login_page_html(
             client_id=client_id,
             nonce=nonce,
             origin=config.service_base_url.rstrip("/"),
             session_id=session_id,
+            bot_login_target=(bot_username, bot_start_url),
         )
     )
     _set_auth_cookies(
@@ -245,10 +251,13 @@ def auth_login_config(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc),
         ) from exc
+    bot_username, bot_start_url = _bot_login_target()
     return TelegramLoginConfigResponse(
         client_id=client_id,
         nonce=nonce,
         origin=config.service_base_url.rstrip("/"),
+        bot_username=bot_username,
+        bot_start_url=bot_start_url,
     )
 
 
@@ -554,6 +563,11 @@ def _session_status_url(*, config: OidcConfig, session_id: str) -> str:
     return f"{config.service_base_url.rstrip('/')}/auth/sessions/{session_id}"
 
 
+def _bot_login_target() -> tuple[str | None, str | None]:
+    """Return bot identity data for login/start instructions."""
+    return get_bot_login_target()
+
+
 def _login_redirect_html(
     *,
     url: str,
@@ -595,6 +609,7 @@ def _login_page_html(
     nonce: str,
     origin: str,
     session_id: str | None,
+    bot_login_target: tuple[str | None, str | None],
 ) -> str:
     session_hint = (
         f"Use X-Session-ID: {session_id} on /chat/*."
@@ -606,6 +621,9 @@ def _login_page_html(
     origin_json = json.dumps(origin)
     session_id_json = json.dumps(session_id)
     session_hint_json = json.dumps(session_hint)
+    bot_username, bot_start_url = bot_login_target
+    bot_username_json = json.dumps(bot_username)
+    bot_start_url_json = json.dumps(bot_start_url)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -618,19 +636,23 @@ def _login_page_html(
     pre {{ white-space: pre-wrap; word-break: break-word; }}
   </style>
 </head>
-<body>
-  <h1>Sign in with Telegram</h1>
-  <p>This authenticates your API session. Chat operations remain bot-scoped.</p>
-  <button id="telegram-login" type="button">Continue with Telegram</button>
-  <pre id="status"></pre>
-  <script src="https://oauth.telegram.org/js/telegram-login.js?3"></script>
-  <script>
-    const clientId = Number({client_id_json});
-    const nonce = {nonce_json};
-    const origin = {origin_json};
-    const launchedSessionId = {session_id_json};
-    const sessionHint = {session_hint_json};
-    const statusBox = document.getElementById("status");
+  <body>
+    <h1>Sign in with Telegram</h1>
+    <p>This authenticates your API session. Chat operations remain bot-scoped.</p>
+    <button id="telegram-login" type="button">Continue with Telegram</button>
+    <pre id="status"></pre>
+    <p id="bot-start-hint"></p>
+    <script src="https://oauth.telegram.org/js/telegram-login.js?3"></script>
+    <script>
+      const clientId = Number({client_id_json});
+      const nonce = {nonce_json};
+      const origin = {origin_json};
+      const launchedSessionId = {session_id_json};
+      const sessionHint = {session_hint_json};
+      const botUsername = {bot_username_json};
+      const botStartUrl = {bot_start_url_json};
+      const statusBox = document.getElementById("status");
+      const botStartHint = document.getElementById("bot-start-hint");
     const fragment = new URLSearchParams(window.location.hash.slice(1));
     const authResult = fragment.get("tgAuthResult");
     const storedState = sessionStorage.getItem("telegram_auth_state") ||
@@ -650,10 +672,27 @@ def _login_page_html(
         localStorage.removeItem("telegram_auth_session_id");
       }}
     }}
-    function show(message) {{
-      statusBox.textContent = message;
-    }}
-    window.addEventListener("message", (event) => {{
+      function show(message) {{
+        statusBox.textContent = message;
+      }}
+      function renderBotStartHint() {{
+        if (!botStartHint || !botUsername || !botStartUrl) {{
+          return;
+        }}
+        botStartHint.textContent = "";
+        botStartHint.append(
+          document.createTextNode("If Telegram says chat not found, open "),
+          Object.assign(document.createElement("a"), {{
+            href: botStartUrl,
+            target: "_blank",
+            rel: "noreferrer",
+            textContent: "@" + botUsername,
+          }}),
+          document.createTextNode(" and press Start.")
+        );
+      }}
+      renderBotStartHint();
+      window.addEventListener("message", (event) => {{
       if (event.origin !== origin) {{
         return;
       }}

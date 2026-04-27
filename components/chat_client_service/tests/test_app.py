@@ -44,6 +44,7 @@ from chat_client_service.update_poller import (
     poll_interval_seconds,
     should_start_update_poller,
 )
+from telegram_client_impl.errors import TelegramClientError
 from telegram_client_impl.store import StoredChannel, StoredMessage, get_store
 
 client = TestClient(app, follow_redirects=False)
@@ -137,6 +138,7 @@ class _MembershipClient:
 def auth_test_env(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     """Set deterministic auth/store env for service tests."""
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:test-token")
+    monkeypatch.setenv("TELEGRAM_BOT_USERNAME", "osshwbot")
     monkeypatch.setenv("APP_SESSION_SECRET", "app-secret")
     monkeypatch.setenv("CHAT_CLIENT_STORE_PATH", ":memory:")
     monkeypatch.delenv("TELEGRAM_UPDATE_MODE", raising=False)
@@ -441,6 +443,8 @@ def test_auth_login_serves_telegram_login_page() -> None:
     assert 'window.addEventListener("message"' in response.text
     assert "telegram-auth-complete" in response.text
     assert "Browser session authenticated. Return to your API client." in response.text
+    assert "https://t.me/osshwbot?start=chatclient" in response.text
+    assert "If Telegram says chat not found, open" in response.text
     assert "window.close()" not in response.text
     assert 'sessionStorage.removeItem("telegram_auth_session_id")' in response.text
     assert "async function responseBody(response)" in response.text
@@ -507,6 +511,10 @@ def test_auth_login_config_supports_telegram_login_library() -> None:
     assert response.json()["client_id"] == "123"
     assert response.json()["origin"] == "https://example.com"
     assert response.json()["nonce"]
+    assert response.json()["bot_username"] == "osshwbot"
+    assert response.json()["bot_start_url"] == (
+        "https://t.me/osshwbot?start=chatclient"
+    )
 
 
 def test_auth_callback_requires_code_and_state() -> None:
@@ -527,6 +535,8 @@ def test_root_serves_telegram_fragment_handler() -> None:
     assert "window.opener.postMessage" in response.text
     assert 'type: "telegram-auth-complete"' in response.text
     assert "You can close this tab and return to your API client." in response.text
+    assert "https://t.me/osshwbot?start=chatclient" in response.text
+    assert "If Telegram says chat not found, open" in response.text
     assert "window.close()" not in response.text
     assert "async function responseBody(response)" in response.text
     assert "Login failed. Please retry." in response.text
@@ -545,7 +555,8 @@ def test_telegram_hash_login_authenticates_session() -> None:
     app.dependency_overrides[get_oidc_config] = lambda: config
 
     session_response = client.post("/auth/sessions")
-    session_id = session_response.json()["session_id"]
+    session_payload = session_response.json()
+    session_id = session_payload["session_id"]
     login_response = client.get(
         "/auth/login",
         params={"session_id": session_id},
@@ -567,6 +578,10 @@ def test_telegram_hash_login_authenticates_session() -> None:
     status_response = client.get(f"/auth/sessions/{session_id}")
 
     assert login_response.status_code == 200
+    assert session_payload["bot_username"] == "osshwbot"
+    assert session_payload["bot_start_url"] == (
+        "https://t.me/osshwbot?start=chatclient"
+    )
     assert "telegram_auth_session_id" in login_response.text
     assert "telegram_auth_state" in login_response.headers["set-cookie"]
     assert "telegram_auth_session_id" in login_response.headers["set-cookie"]
@@ -749,6 +764,14 @@ def test_auth_session_flow_authenticates_chat_with_session_header() -> None:
 
     assert session_response.status_code == 201
     assert session_payload["authenticated"] is False
+    assert session_payload["bot_username"] == "osshwbot"
+    assert session_payload["bot_start_url"] == (
+        "https://t.me/osshwbot?start=chatclient"
+    )
+    assert config_response.json()["bot_username"] == "osshwbot"
+    assert config_response.json()["bot_start_url"] == (
+        "https://t.me/osshwbot?start=chatclient"
+    )
     assert session_payload["login_url"].endswith(
         f"/auth/login?session_id={session_id}&flow=page"
     )
@@ -1164,6 +1187,7 @@ def test_delete_message_delegates_to_client(mock_chat_client: Mock) -> None:
 
 def test_me_channel_requires_telegram_identity(mock_chat_client: Mock) -> None:
     """The explicit 'me' alias fails clearly if auth state lacks Telegram identity."""
+
     def empty_claims() -> dict[str, str]:
         return {}
 
@@ -1255,6 +1279,30 @@ def test_send_message_returns_500_on_client_error(mock_chat_client: Mock) -> Non
     )
 
     assert response.status_code == 500
+
+
+def test_send_message_me_chat_not_found_returns_start_guidance(
+    mock_chat_client: Mock,
+) -> None:
+    """Sending to 'me' explains how to establish the bot DM before retrying."""
+    mock_chat_client.send_message.side_effect = TelegramClientError(
+        "Telegram Bot API returned error for sendMessage: Bad Request: chat not found",
+        method="sendMessage",
+        error_code=400,
+    )
+
+    response = client.post(
+        "/chat/messages",
+        json={"channel_id": "me", "text": "hello"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "This bot cannot message your private chat yet. Open "
+        "@osshwbot (https://t.me/osshwbot?start=chatclient), press Start, then "
+        "retry. If you already did that, log in again and make sure you "
+        "authenticated against the same bot."
+    )
 
 
 def test_get_messages_returns_500_on_client_error(mock_chat_client: Mock) -> None:

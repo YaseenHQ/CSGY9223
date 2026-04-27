@@ -168,6 +168,20 @@ class TelegramClient(ChatClient):
         member = _as_dict(result.get("result"))
         return member.get("status") not in {"left", "kicked"}
 
+    def get_bot_username(self) -> str | None:
+        """Return the current bot username reported by Telegram, if any."""
+        self._ensure_connected()
+        payload = self._request(
+            "getMe",
+            json={},
+            retry_on_rate_limit=False,
+        )
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            return None
+        username = result.get("username")
+        return username if isinstance(username, str) and username else None
+
     def _ensure_connected(self) -> None:
         """Ensure required Bot API configuration is present."""
         if self._connected:
@@ -333,6 +347,29 @@ def get_client_impl(*, interactive: bool = False) -> ChatClient:
     return TelegramClient(config=config)
 
 
+def get_bot_login_target() -> tuple[str | None, str | None]:
+    """Return the bot username and a Telegram deep link that shows Start."""
+    env_username = os.getenv("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@")
+    if env_username:
+        return env_username, _bot_start_url(env_username)
+
+    config = TelegramClientConfig.from_env(interactive=False)
+    if not config.bot_token:
+        return None, None
+
+    client = TelegramClient(config=config)
+    try:
+        username = client.get_bot_username()
+    except TelegramClientError:
+        LOGGER.warning("Failed to resolve Telegram bot username from Bot API")
+        return None, None
+    finally:
+        client.close()
+    if username is None:
+        return None, None
+    return username, _bot_start_url(username)
+
+
 def _require_non_empty(*, value: str, name: str) -> None:
     """Validate required string parameters."""
     if not value:
@@ -356,6 +393,11 @@ def _as_dict(value: object) -> dict[str, object]:
 
 def _as_int(value: object) -> int | None:
     return value if isinstance(value, int) else None
+
+
+def _bot_start_url(username: str) -> str:
+    normalized = username.lstrip("@")
+    return f"https://t.me/{normalized}?start=chatclient"
 
 
 def _background_polling_enabled() -> bool:

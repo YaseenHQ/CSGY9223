@@ -50,6 +50,13 @@ The Telegram implementation uses the official Bot API. A deployed service needs
 `get_messages` and `get_channels` read bot-observed state stored locally through
 polling, webhook delivery, or service sends.
 
+Bot setup assumptions for developers:
+
+- the bot was created in [@BotFather](https://t.me/BotFather)
+- `TELEGRAM_BOT_TOKEN` matches that bot
+- if group reads matter, privacy mode is disabled via BotFather `/setprivacy`
+  → `Disable`
+
 Message objects use opaque `channel_id:message_id` identifiers so clients can
 pass them directly to `DELETE /chat/messages/{message_id}`.
 
@@ -82,6 +89,61 @@ login/session endpoints for HTTP consumers:
 
 The preferred adapter/client flow is `POST /auth/sessions` followed by
 `X-Session-ID` on `/chat/*`. Direct Bearer tokens are still accepted.
+
+`POST /auth/sessions` and `GET /auth/login/config` also return `bot_username`
+and `bot_start_url`. Use that Telegram deep link to open the correct bot and
+press Start before sending to `channel_id="me"` if the bot has never chatted
+with the user before.
+
+### Session-First API Client Flow
+
+The intended HTTP client flow is:
+
+1. `POST /auth/sessions`
+2. Open the returned `login_url`
+3. If present, use `bot_start_url` to open the configured bot in Telegram and
+   press Start
+4. Poll `GET /auth/sessions/{session_id}` until `authenticated=true`
+5. Send `X-Session-ID: <session_id>` on `/chat/*`
+
+Example PowerShell flow:
+
+```powershell
+$base = "https://chat-client-service.onrender.com"
+
+$session = Invoke-RestMethod -Method POST -Uri "$base/auth/sessions"
+Start-Process $session.login_url
+
+Invoke-RestMethod -Uri $session.status_url | ConvertTo-Json -Depth 5
+
+$headers = @{
+  "X-Session-ID" = $session.session_id
+}
+
+Invoke-RestMethod -Uri "$base/auth/me" -Headers $headers | ConvertTo-Json -Depth 5
+
+$sent = Invoke-RestMethod `
+  -Method POST `
+  -Uri "$base/chat/messages" `
+  -Headers $headers `
+  -ContentType "application/json" `
+  -Body '{"channel_id":"me","text":"hello from powershell"}'
+
+Invoke-RestMethod `
+  -Uri "$base/chat/messages?channel_id=me" `
+  -Headers $headers | ConvertTo-Json -Depth 5
+```
+
+`channel_id` remains explicit. Use `"me"` to target the logged-in user's DM
+with the bot.
+
+If `POST /chat/messages` returns a `"chat not found"`-style error for
+`channel_id="me"`, the service should guide the user to:
+
+- open the exact bot identified by `bot_username` / `bot_start_url`
+- press Start
+- retry the request
+- if it still fails, log in again and make sure the same bot was used
 ## Components
 
 Documentation for chat client components will be added here as the implementation develops.

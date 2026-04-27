@@ -18,6 +18,7 @@ from chat_client_service.update_poller import (
     poll_interval_seconds,
     should_start_update_poller,
 )
+from telegram_client_impl.client import get_bot_login_target
 
 LOGGER = logging.getLogger(__name__)
 
@@ -73,8 +74,23 @@ def health() -> HealthResponse:
 @app.get("/", response_model=None)
 def root() -> HTMLResponse:
     """Handle Telegram auth fragments that browsers do not send to the server."""
+    bot_username, bot_start_url = get_bot_login_target()
     return HTMLResponse(
-        """<!doctype html>
+        _root_fragment_handler_html(
+            bot_username=bot_username,
+            bot_start_url=bot_start_url,
+        )
+    )
+
+
+def _root_fragment_handler_html(
+    *,
+    bot_username: str | None,
+    bot_start_url: str | None,
+) -> str:
+    bot_username_js = _js_string(bot_username)
+    bot_start_url_js = _js_string(bot_start_url)
+    return """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -82,14 +98,35 @@ def root() -> HTMLResponse:
 </head>
 <body>
   <pre id="status">Completing Telegram login...</pre>
+  <p id="bot-start-hint"></p>
   <script>
     const statusBox = document.getElementById("status");
+    const botStartHint = document.getElementById("bot-start-hint");
+    const botUsername = __BOT_USERNAME__;
+    const botStartUrl = __BOT_START_URL__;
     const fragment = new URLSearchParams(window.location.hash.slice(1));
     const authResult = fragment.get("tgAuthResult");
     const state = sessionStorage.getItem("telegram_auth_state") ||
       localStorage.getItem("telegram_auth_state");
     const sessionId = sessionStorage.getItem("telegram_auth_session_id") ||
       localStorage.getItem("telegram_auth_session_id");
+    function renderBotStartHint() {
+      if (!botStartHint || !botUsername || !botStartUrl) {
+        return;
+      }
+      botStartHint.textContent = "";
+      botStartHint.append(
+        document.createTextNode("If Telegram says chat not found, open "),
+        Object.assign(document.createElement("a"), {
+          href: botStartUrl,
+          target: "_blank",
+          rel: "noreferrer",
+          textContent: "@" + botUsername,
+        }),
+        document.createTextNode(" and press Start.")
+      );
+    }
+    renderBotStartHint();
     if (!authResult) {
       statusBox.textContent = "Chat Client Service";
     } else {
@@ -142,8 +179,22 @@ def root() -> HTMLResponse:
   </script>
 </body>
 </html>
-"""
+""".replace("__BOT_USERNAME__", bot_username_js).replace(
+        "__BOT_START_URL__", bot_start_url_js
     )
+
+
+def _js_string(value: str | None) -> str:
+    if value is None:
+        return "null"
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("</", "<\\/")
+    )
+    return f'"{escaped}"'
 
 
 app.include_router(auth_router)

@@ -47,6 +47,8 @@ class AuthSessionResponse(BaseModel):
     authenticated: bool
     login_url: str
     status_url: str
+    bot_username: str | None = None
+    bot_start_url: str | None = None
 
 
 class AuthSessionStatusResponse(BaseModel):
@@ -78,6 +80,8 @@ class TelegramLoginConfigResponse(BaseModel):
     client_id: str
     nonce: str
     origin: str
+    bot_username: str | None = None
+    bot_start_url: str | None = None
 
 
 class TelegramLoginCallbackRequest(BaseModel):

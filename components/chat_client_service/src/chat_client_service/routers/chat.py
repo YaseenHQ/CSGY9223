@@ -16,6 +16,7 @@ from chat_client_service.routers.auth import (
     get_current_claims,
     get_current_token,
 )
+from telegram_client_impl.client import get_bot_login_target
 from telegram_client_impl.errors import TelegramClientError
 from telegram_client_impl.store import get_store
 
@@ -58,6 +59,7 @@ def send_message(
     client: Annotated[ChatClient, Depends(get_chat_client)],
 ) -> MessageModel:
     """Send a message to a chat via the configured Telegram client."""
+    requested_self_chat = payload.channel_id == "me"
     channel_id = _resolve_channel_id(claims=claims, channel_id=payload.channel_id)
     _require_channel_access(claims=claims, channel_id=channel_id, client=client)
     try:
@@ -66,6 +68,16 @@ def send_message(
             telegram_id=claims.get("telegram_id", ""),
             channel_id=channel_id,
         )
+    except TelegramClientError as exc:
+        if _is_missing_bot_start(exc=exc, requested_self_chat=requested_self_chat):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=_missing_bot_start_detail(),
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -312,4 +324,32 @@ def _channel_model(channel: Channel) -> ChannelModel:
         id=channel.channel_id,
         name=channel.name,
         channel_type=channel.channel_type or "unknown",
+    )
+
+
+def _is_missing_bot_start(
+    *,
+    exc: TelegramClientError,
+    requested_self_chat: bool,
+) -> bool:
+    if not requested_self_chat:
+        return False
+    if exc.method != "sendMessage":
+        return False
+    return "chat not found" in str(exc).lower()
+
+
+def _missing_bot_start_detail() -> str:
+    bot_username, bot_start_url = get_bot_login_target()
+    if bot_username and bot_start_url:
+        return (
+            "This bot cannot message your private chat yet. Open "
+            f"@{bot_username} ({bot_start_url}), press Start, then retry. "
+            "If you already did that, log in again and make sure you authenticated "
+            "against the same bot."
+        )
+    return (
+        "This bot cannot message your private chat yet. Open the bot in Telegram, "
+        "press Start, then retry. If you already did that, log in again and make "
+        "sure you authenticated against the same bot."
     )

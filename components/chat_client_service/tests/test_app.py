@@ -444,7 +444,8 @@ def test_auth_login_serves_telegram_login_page() -> None:
     assert "telegram-auth-complete" in response.text
     assert "Browser session authenticated. Return to your API client." in response.text
     assert "https://t.me/osshwbot?start=chatclient" in response.text
-    assert "If Telegram says chat not found, open" in response.text
+    assert "If this is your first time using this bot, open" in response.text
+    assert "press Start before sending messages." in response.text
     assert "window.close()" not in response.text
     assert 'sessionStorage.removeItem("telegram_auth_session_id")' in response.text
     assert "async function responseBody(response)" in response.text
@@ -536,7 +537,8 @@ def test_root_serves_telegram_fragment_handler() -> None:
     assert 'type: "telegram-auth-complete"' in response.text
     assert "You can close this tab and return to your API client." in response.text
     assert "https://t.me/osshwbot?start=chatclient" in response.text
-    assert "If Telegram says chat not found, open" in response.text
+    assert "If this is your first time using this bot, open" in response.text
+    assert "press Start before sending messages." in response.text
     assert "window.close()" not in response.text
     assert "async function responseBody(response)" in response.text
     assert "Login failed. Please retry." in response.text

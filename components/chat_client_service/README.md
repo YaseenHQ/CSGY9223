@@ -300,6 +300,97 @@ That error means:
 
 The fix is to open the bot shown by `bot_start_url`, press Start, then retry.
 
+## macOS Terminal Walkthrough
+
+This is the matching `curl` flow for macOS Terminal, iTerm, or any POSIX shell
+such as `zsh` or `bash`.
+
+Create a pending auth session:
+
+```bash
+BASE="https://chat-client-service.onrender.com"
+
+SESSION_JSON="$(curl -sS -X POST "$BASE/auth/sessions")"
+printf '%s\n' "$SESSION_JSON"
+```
+
+Extract the session fields:
+
+```bash
+SESSION_ID="$(printf '%s' "$SESSION_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
+LOGIN_URL="$(printf '%s' "$SESSION_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["login_url"])')"
+STATUS_URL="$(printf '%s' "$SESSION_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status_url"])')"
+BOT_START_URL="$(printf '%s' "$SESSION_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("bot_start_url") or "")')"
+```
+
+Open the login page:
+
+```bash
+open "$LOGIN_URL"
+```
+
+If `BOT_START_URL` is non-empty and this is the first time the user is talking
+to that bot, open it and press Start:
+
+```bash
+[ -n "$BOT_START_URL" ] && open "$BOT_START_URL"
+```
+
+After finishing Telegram login in the browser, poll the session:
+
+```bash
+curl -sS "$STATUS_URL"
+```
+
+Use the authenticated session on `/chat/*`:
+
+```bash
+AUTH_HEADER="X-Session-ID: $SESSION_ID"
+```
+
+Check the authenticated identity:
+
+```bash
+curl -sS -H "$AUTH_HEADER" "$BASE/auth/me"
+```
+
+Send a DM through the bot:
+
+```bash
+SENT_JSON="$(curl -sS \
+  -X POST \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{"channel_id":"me","text":"hello from mac terminal"}' \
+  "$BASE/chat/messages")"
+
+printf '%s\n' "$SENT_JSON"
+```
+
+Extract the opaque message id:
+
+```bash
+SENT_ID="$(printf '%s' "$SENT_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+```
+
+Read the DM history:
+
+```bash
+curl -sS -H "$AUTH_HEADER" "$BASE/chat/messages?channel_id=me"
+```
+
+Read one message by opaque id:
+
+```bash
+curl -sS -H "$AUTH_HEADER" "$BASE/chat/messages/$SENT_ID"
+```
+
+Delete one message by opaque id:
+
+```bash
+curl -sS -X DELETE -H "$AUTH_HEADER" "$BASE/chat/messages/$SENT_ID"
+```
+
 ## Chat Semantics
 
 This implementation is bot-scoped:

@@ -116,14 +116,18 @@ def _root_fragment_handler_html(
       }
       botStartHint.textContent = "";
       botStartHint.append(
-        document.createTextNode("If Telegram says chat not found, open "),
+        document.createTextNode(
+          "If this is your first time using this bot, open "
+        ),
         Object.assign(document.createElement("a"), {
           href: botStartUrl,
           target: "_blank",
           rel: "noreferrer",
           textContent: "@" + botUsername,
         }),
-        document.createTextNode(" and press Start.")
+        document.createTextNode(
+          " in Telegram and press Start before sending messages."
+        )
       );
     }
     renderBotStartHint();

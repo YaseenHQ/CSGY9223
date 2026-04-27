@@ -134,6 +134,33 @@ Invoke-RestMethod `
   -Headers $headers | ConvertTo-Json -Depth 5
 ```
 
+Example macOS Terminal flow:
+
+```bash
+BASE="https://chat-client-service.onrender.com"
+
+SESSION_JSON="$(curl -sS -X POST "$BASE/auth/sessions")"
+SESSION_ID="$(printf '%s' "$SESSION_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])')"
+LOGIN_URL="$(printf '%s' "$SESSION_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["login_url"])')"
+STATUS_URL="$(printf '%s' "$SESSION_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["status_url"])')"
+BOT_START_URL="$(printf '%s' "$SESSION_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("bot_start_url") or "")')"
+
+open "$LOGIN_URL"
+[ -n "$BOT_START_URL" ] && open "$BOT_START_URL"
+
+curl -sS "$STATUS_URL"
+
+AUTH_HEADER="X-Session-ID: $SESSION_ID"
+curl -sS -H "$AUTH_HEADER" "$BASE/auth/me"
+
+curl -sS \
+  -X POST \
+  -H "$AUTH_HEADER" \
+  -H "Content-Type: application/json" \
+  -d '{"channel_id":"me","text":"hello from mac terminal"}' \
+  "$BASE/chat/messages"
+```
+
 `channel_id` remains explicit. Use `"me"` to target the logged-in user's DM
 with the bot.
 

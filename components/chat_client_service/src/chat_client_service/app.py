@@ -93,6 +93,17 @@ def root() -> HTMLResponse:
     if (!authResult) {
       statusBox.textContent = "Chat Client Service";
     } else {
+      async function responseBody(response) {
+        const contentType = response.headers.get("content-type") || "";
+        if (!contentType.includes("application/json")) {
+          return {detail: "Login failed. Please retry."};
+        }
+        try {
+          return await response.json();
+        } catch {
+          return {detail: "Login failed. Please retry."};
+        }
+      }
       fetch("/auth/telegram-login", {
         method: "POST",
         credentials: "same-origin",
@@ -103,9 +114,9 @@ def root() -> HTMLResponse:
           session_id: sessionId,
         }),
       }).then(async (response) => {
-        const body = await response.json();
+        const body = await responseBody(response);
         if (!response.ok) {
-          statusBox.textContent = body.detail || "Login failed.";
+          statusBox.textContent = body.detail || "Login failed. Please retry.";
           return;
         }
         sessionStorage.removeItem("telegram_auth_state");
@@ -124,6 +135,8 @@ def root() -> HTMLResponse:
             window.location.origin
           );
         }
+      }).catch(() => {
+        statusBox.textContent = "Login failed. Please retry.";
       });
     }
   </script>

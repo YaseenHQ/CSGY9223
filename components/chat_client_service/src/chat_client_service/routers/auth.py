@@ -645,6 +645,9 @@ def _login_page_html(
       if (launchedSessionId !== null) {{
         sessionStorage.setItem("telegram_auth_session_id", launchedSessionId);
         localStorage.setItem("telegram_auth_session_id", launchedSessionId);
+      }} else {{
+        sessionStorage.removeItem("telegram_auth_session_id");
+        localStorage.removeItem("telegram_auth_session_id");
       }}
     }}
     function show(message) {{
@@ -679,15 +682,36 @@ def _login_page_html(
       }});
       return btoa(raw).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
     }}
+    async function responseBody(response) {{
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {{
+        return {{
+          detail: "Login failed. Please retry.",
+        }};
+      }}
+      try {{
+        return await response.json();
+      }} catch {{
+        return {{
+          detail: "Login failed. Please retry.",
+        }};
+      }}
+    }}
     async function postJson(url, data) {{
-      const response = await fetch(url, {{
-        method: "POST",
-        headers: {{"content-type": "application/json"}},
-        body: JSON.stringify(data),
-      }});
-      const body = await response.json();
+      let response;
+      try {{
+        response = await fetch(url, {{
+          method: "POST",
+          headers: {{"content-type": "application/json"}},
+          body: JSON.stringify(data),
+        }});
+      }} catch {{
+        show("Login failed. Please retry.");
+        return false;
+      }}
+      const body = await responseBody(response);
       if (!response.ok) {{
-        show(body.detail || "Login failed.");
+        show(body.detail || "Login failed. Please retry.");
         return false;
       }}
       sessionStorage.removeItem("telegram_auth_state");
@@ -726,8 +750,14 @@ def _login_page_html(
         state,
         session_id: sessionId,
       }}).then((completed) => {{
-        if (completed && window.name === "telegram_auth_popup") {{
-          window.close();
+        if (completed && window.opener && !window.opener.closed) {{
+          window.opener.postMessage(
+            {{
+              type: "telegram-auth-complete",
+              sessionId: sessionId,
+            }},
+            origin
+          );
         }}
       }});
     }} else {{

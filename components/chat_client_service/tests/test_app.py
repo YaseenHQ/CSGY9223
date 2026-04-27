@@ -441,6 +441,10 @@ def test_auth_login_serves_telegram_login_page() -> None:
     assert 'window.addEventListener("message"' in response.text
     assert "telegram-auth-complete" in response.text
     assert "Browser session authenticated. Return to your API client." in response.text
+    assert "window.close()" not in response.text
+    assert 'sessionStorage.removeItem("telegram_auth_session_id")' in response.text
+    assert "async function responseBody(response)" in response.text
+    assert "Login failed. Please retry." in response.text
 
 
 def test_auth_login_prefers_oidc_code_flow_when_secret_configured() -> None:
@@ -524,6 +528,8 @@ def test_root_serves_telegram_fragment_handler() -> None:
     assert 'type: "telegram-auth-complete"' in response.text
     assert "You can close this tab and return to your API client." in response.text
     assert "window.close()" not in response.text
+    assert "async function responseBody(response)" in response.text
+    assert "Login failed. Please retry." in response.text
 
 
 def test_telegram_hash_login_authenticates_session() -> None:

@@ -162,6 +162,73 @@ def test_health_endpoint() -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_docs_serves_dark_themed_swagger_ui() -> None:
+    """GET /docs renders Swagger UI with the dark CSS layered on top of base."""
+    response = client.get("/docs")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    body = response.text
+    assert "swagger-ui-dist@5/swagger-ui.css" in body
+    assert "/static/swagger-dark.css" in body
+    assert body.index("swagger-ui-dist@5/swagger-ui.css") < body.index(
+        "/static/swagger-dark.css"
+    ), "Dark overlay must come after base swagger-ui.css so overrides apply."
+    assert "swagger-ui-bundle.js" in body
+    assert 'id="swagger-ui"' in body
+
+
+def test_static_swagger_dark_css_is_served() -> None:
+    """The vendored Universal Dark theme CSS is reachable under /static."""
+    response = client.get("/static/swagger-dark.css")
+    assert response.status_code == 200
+    assert "text/css" in response.headers["content-type"]
+    assert "--all-bg-color" in response.text
+    # Upstream wraps rules in @media (prefers-color-scheme: dark), which would
+    # make the theme silently disabled for users whose OS is in light mode.
+    # We strip that wrapper so dark mode applies unconditionally.
+    assert "@media (prefers-color-scheme: dark)" not in response.text
+
+
+def test_redoc_and_openapi_schema_still_available() -> None:
+    """Disabling the default /docs must not break ReDoc or the OpenAPI schema."""
+    redoc_response = client.get("/redoc")
+    schema_response = client.get("/openapi.json")
+    assert redoc_response.status_code == 200
+    assert schema_response.status_code == 200
+    assert schema_response.json()["info"]["title"] == "Chat Client Service"
+
+
+def test_openapi_hides_html_pages_and_declares_all_auth_schemes() -> None:
+    """HTML-only routes stay out of /docs; every supported auth path is advertised."""
+    schema = client.get("/openapi.json").json()
+    paths = set(schema["paths"].keys())
+    # HTML pages serve browser UI, not API endpoints; hide them from Swagger.
+    assert "/" not in paths
+    assert "/auth/login" not in paths
+    # Real API endpoints remain listed.
+    assert "/chat/messages" in paths
+    assert "/auth/me" in paths
+    # All three credential sources accepted by get_current_token must be
+    # declared so Swagger UI's Authorize dialog offers each of them.
+    schemes = schema["components"]["securitySchemes"]
+    assert schemes["HTTPBearer"] == {"type": "http", "scheme": "bearer"}
+    assert schemes["APIKeyHeader"] == {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Session-ID",
+    }
+    assert schemes["APIKeyCookie"] == {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "chat_client_session",
+    }
+    # Protected chat routes must advertise all three schemes so Try-It-Out
+    # works regardless of which credential the user pastes into Authorize.
+    chat_security = schema["paths"]["/chat/messages"]["get"]["security"]
+    scheme_names = {next(iter(entry.keys())) for entry in chat_security}
+    assert scheme_names == {"HTTPBearer", "APIKeyHeader", "APIKeyCookie"}
+
+
 def test_health_request_emits_success_telemetry() -> None:
     """GET /health records latency and marks the request as successful."""
     with patch(
@@ -444,8 +511,10 @@ def test_auth_login_serves_telegram_login_page() -> None:
     assert "telegram-auth-complete" in response.text
     assert "Browser session authenticated. Return to your API client." in response.text
     assert "https://t.me/osshwbot?start=chatclient" in response.text
+    assert "Open @osshwbot in Telegram" in response.text
     assert "If this is your first time using this bot, open" in response.text
     assert "press Start before sending messages." in response.text
+    assert 'id="telegram-login"' in response.text
     assert "window.close()" not in response.text
     assert 'sessionStorage.removeItem("telegram_auth_session_id")' in response.text
     assert "async function responseBody(response)" in response.text
@@ -537,6 +606,7 @@ def test_root_serves_telegram_fragment_handler() -> None:
     assert 'type: "telegram-auth-complete"' in response.text
     assert "You can close this tab and return to your API client." in response.text
     assert "https://t.me/osshwbot?start=chatclient" in response.text
+    assert "Open @osshwbot in Telegram" in response.text
     assert "If this is your first time using this bot, open" in response.text
     assert "press Start before sending messages." in response.text
     assert "window.close()" not in response.text

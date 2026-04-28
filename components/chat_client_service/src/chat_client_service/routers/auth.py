@@ -1,6 +1,7 @@
 """Telegram OIDC authentication routes."""
 
 import base64
+import html
 import json
 import secrets
 import time
@@ -11,7 +12,6 @@ from fastapi import (
     APIRouter,
     Cookie,
     Depends,
-    Header,
     HTTPException,
     Query,
     Request,
@@ -19,7 +19,12 @@ from fastapi import (
     status,
 )
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import (
+    APIKeyCookie,
+    APIKeyHeader,
+    HTTPAuthorizationCredentials,
+    HTTPBearer,
+)
 
 from chat_client_service.models import (
     AuthSessionResponse,
@@ -46,11 +51,18 @@ from telegram_client_impl.client import get_bot_login_target
 from telegram_client_impl.store import StoredChannel, get_store
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-_bearer = HTTPBearer(auto_error=False)
 _APP_SESSION_COOKIE = "chat_client_session"
 _STATE_COOKIE = "telegram_auth_state"
 _PENDING_SESSION_COOKIE = "telegram_auth_session_id"
 _TOKEN_TYPE_BEARER = "bearer"  # noqa: S105
+
+# Security schemes surfaced in the OpenAPI spec so Swagger UI's Authorize
+# dialog exposes every supported credential source. auto_error=False keeps
+# each scheme optional — get_current_token performs the cross-source check
+# and raises 401 only if none of them yield a valid token.
+_bearer = HTTPBearer(auto_error=False)
+_session_header = APIKeyHeader(name="X-Session-ID", auto_error=False)
+_session_cookie = APIKeyCookie(name=_APP_SESSION_COOKIE, auto_error=False)
 
 
 def get_oidc_config() -> OidcConfig:
@@ -64,11 +76,8 @@ def get_current_token(
         Depends(_bearer),
     ],
     config: Annotated[OidcConfig, Depends(get_oidc_config)],
-    x_session_id: Annotated[str | None, Header(alias="X-Session-ID")] = None,
-    chat_client_session: Annotated[
-        str | None,
-        Cookie(alias=_APP_SESSION_COOKIE),
-    ] = None,
+    x_session_id: Annotated[str | None, Depends(_session_header)] = None,
+    chat_client_session: Annotated[str | None, Depends(_session_cookie)] = None,
 ) -> str:
     """Return the validated Bearer token or raise 401."""
     token: str | None = None
@@ -120,7 +129,7 @@ def create_auth_session(
     )
 
 
-@router.get("/login", response_model=None)
+@router.get("/login", response_model=None, include_in_schema=False)
 def auth_login(
     config: Annotated[OidcConfig, Depends(get_oidc_config)],
     session_id: Annotated[str | None, Query(min_length=1)] = None,
@@ -603,6 +612,46 @@ def _login_redirect_html(
 """
 
 
+_TELEGRAM_LOGO_PATH = (
+    "M9.78 18.65"
+    "l.28-4.23 7.68-6.92"
+    "c.34-.31-.07-.46-.52-.19"
+    "L7.74 13.3 3.64 12"
+    "c-.88-.27-.89-.86.2-1.3"
+    "l15.97-6.16"
+    "c.73-.27 1.43.18 1.15 1.3"
+    "l-2.72 12.81"
+    "c-.19.91-.74 1.13-1.5.71"
+    "L12.6 16.3"
+    "l-1.99 1.93"
+    "c-.23.23-.42.42-.83.42z"
+)
+
+
+def _bot_start_markup(
+    *,
+    bot_username: str | None,
+    bot_start_url: str | None,
+) -> str:
+    if not bot_username or not bot_start_url:
+        return ""
+    username = html.escape(bot_username, quote=True)
+    url = html.escape(bot_start_url, quote=True)
+    return f"""
+    <section class="bot-start">
+      <p>
+        If this is your first time using this bot, open @{username} in Telegram
+        and press Start before sending messages.
+      </p>
+      <p>
+        <a href="{url}" target="_blank" rel="noreferrer">
+          Open @{username} in Telegram
+        </a>
+      </p>
+    </section>
+"""
+
+
 def _login_page_html(
     *,
     client_id: str,
@@ -622,8 +671,10 @@ def _login_page_html(
     session_id_json = json.dumps(session_id)
     session_hint_json = json.dumps(session_hint)
     bot_username, bot_start_url = bot_login_target
-    bot_username_json = json.dumps(bot_username)
-    bot_start_url_json = json.dumps(bot_start_url)
+    bot_start_markup = _bot_start_markup(
+        bot_username=bot_username,
+        bot_start_url=bot_start_url,
+    )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -631,17 +682,63 @@ def _login_page_html(
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Telegram Login</title>
   <style>
-    body {{ font-family: sans-serif; margin: 2rem; line-height: 1.5; }}
-    button {{ padding: 0.7rem 1rem; cursor: pointer; }}
-    pre {{ white-space: pre-wrap; word-break: break-word; }}
+    body {{
+      margin: 0; min-height: 100vh;
+      display: flex; flex-direction: column; align-items: center;
+      padding: 14vh 1.5rem 2rem;
+      background: #1a1a1a; color: #f5f5f5;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }}
+    main {{ width: 100%; max-width: 26rem; text-align: center; }}
+    h1 {{
+      margin: 0 0 0.5rem;
+      font-size: 1.5rem; font-weight: 600;
+    }}
+    .lead {{
+      margin: 0 auto 1.75rem;
+      color: #9a9a9a; line-height: 1.5;
+    }}
+    .button {{
+      display: inline-flex;
+      align-items: center; justify-content: center;
+      gap: 0.5rem;
+      min-width: 14rem; padding: 0.65rem 1.4rem;
+      border: 0; border-radius: 999px;
+      background: #54a9eb; color: #fff;
+      font: inherit; font-weight: 500;
+      text-decoration: none; cursor: pointer;
+      transition: background 0.15s ease;
+    }}
+    .button:hover {{ background: #3d99d6; }}
+    .tg-icon {{ width: 1.15em; height: 1.15em; flex-shrink: 0; }}
+    #status {{
+      margin: 1rem 0 0; min-height: 1.25em;
+      color: #9a9a9a; font-size: 0.9rem;
+      white-space: pre-wrap; word-break: break-word;
+    }}
+    .bot-start {{
+      margin-top: 2.5rem;
+      color: #8a8a8a; font-size: 0.85rem; line-height: 1.55;
+    }}
+    .bot-start p {{ margin: 0 0 0.4rem; }}
+    .bot-start a {{ color: #e5e5e5; word-break: break-word; }}
   </style>
 </head>
   <body>
-    <h1>Sign in with Telegram</h1>
-    <p>This authenticates your API session. Chat operations remain bot-scoped.</p>
-    <button id="telegram-login" type="button">Continue with Telegram</button>
-    <pre id="status"></pre>
-    <p id="bot-start-hint"></p>
+    <main>
+      <h1>Sign in with Telegram</h1>
+      <p class="lead">
+        Authenticate this API session with your Telegram account.
+      </p>
+      <button id="telegram-login" class="button" type="button">
+        <svg class="tg-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="{_TELEGRAM_LOGO_PATH}" fill="currentColor"/>
+        </svg>
+        Log in with Telegram
+      </button>
+      <pre id="status" aria-live="polite"></pre>
+      {bot_start_markup}
+    </main>
     <script src="https://oauth.telegram.org/js/telegram-login.js?3"></script>
     <script>
       const clientId = Number({client_id_json});
@@ -649,10 +746,7 @@ def _login_page_html(
       const origin = {origin_json};
       const launchedSessionId = {session_id_json};
       const sessionHint = {session_hint_json};
-      const botUsername = {bot_username_json};
-      const botStartUrl = {bot_start_url_json};
       const statusBox = document.getElementById("status");
-      const botStartHint = document.getElementById("bot-start-hint");
     const fragment = new URLSearchParams(window.location.hash.slice(1));
     const authResult = fragment.get("tgAuthResult");
     const storedState = sessionStorage.getItem("telegram_auth_state") ||
@@ -675,27 +769,6 @@ def _login_page_html(
       function show(message) {{
         statusBox.textContent = message;
       }}
-      function renderBotStartHint() {{
-        if (!botStartHint || !botUsername || !botStartUrl) {{
-          return;
-        }}
-        botStartHint.textContent = "";
-        botStartHint.append(
-          document.createTextNode(
-            "If this is your first time using this bot, open "
-          ),
-          Object.assign(document.createElement("a"), {{
-            href: botStartUrl,
-            target: "_blank",
-            rel: "noreferrer",
-            textContent: "@" + botUsername,
-          }}),
-          document.createTextNode(
-            " in Telegram and press Start before sending messages."
-          )
-        );
-      }}
-      renderBotStartHint();
       window.addEventListener("message", (event) => {{
       if (event.origin !== origin) {{
         return;

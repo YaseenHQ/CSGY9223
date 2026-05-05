@@ -6,11 +6,19 @@ from abc import ABC, abstractmethod
 from typing import Any, TypedDict
 
 
-class ToolCallResponse(TypedDict):
-    """Structured tool invocation returned by an LLM response."""
-
+class _ToolCallResponseRequired(TypedDict):
     name: str
     arguments: dict[str, Any]
+
+
+class ToolCallResponse(_ToolCallResponseRequired, total=False):
+    """Structured tool invocation returned by an LLM response.
+
+    ``name`` and ``arguments`` are always present.  ``output`` is optional
+    and may be populated after the tool has been executed with its result.
+    """
+
+    output: str | None
 
 
 class AIClient(ABC):
@@ -23,4 +31,11 @@ class AIClient(ABC):
         context: dict[str, Any] | None = None,
         tools: list[dict[str, Any]] | None = None,
     ) -> str | ToolCallResponse:
-        """Return model text or a structured tool call for ``prompt``."""
+        """Process ``prompt`` and return the model's response.
+
+        Returns a plain ``str`` for text-only responses, or a
+        ``ToolCallResponse`` dict when the model invokes a tool.  The
+        ``ToolCallResponse`` includes the tool ``name``, its ``arguments``,
+        and optionally an ``output`` field populated after the tool has been
+        executed and its result recorded.
+        """

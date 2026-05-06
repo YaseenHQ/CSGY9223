@@ -70,9 +70,7 @@ async def swagger_ui_dark() -> HTMLResponse:
     """
     title = html.escape(f"{app.title} \u2013 Swagger UI", quote=True)
     openapi_url = app.openapi_url or "/openapi.json"
-    redirect_url = (
-        app.swagger_ui_oauth2_redirect_url or "/docs/oauth2-redirect"
-    )
+    redirect_url = app.swagger_ui_oauth2_redirect_url or "/docs/oauth2-redirect"
     body = f"""<!DOCTYPE html>
 <html lang="en">
 <head>

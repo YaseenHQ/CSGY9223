@@ -37,8 +37,6 @@ def test_shared_message_dataclass_shape() -> None:
 def test_telegram_client_is_chat_client() -> None:
     """TelegramClient is constructible and conforms to ChatClient."""
     config = TelegramClientConfig(
-        api_id=None,
-        api_hash=None,
         bot_token=None,
     )
     client = TelegramClient(config=config)

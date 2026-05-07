@@ -1,6 +1,7 @@
 # CS-GY-9223 Open Source
 
-A chat client workspace with a **shared vertical API** (git dependency) and a **Telegram** implementation.
+A chat client workspace with a shared vertical API, a Telegram-backed service,
+AI client components, and issue tracker integration.
 
 ## Team
 
@@ -14,52 +15,30 @@ A chat client workspace with a **shared vertical API** (git dependency) and a **
 - Pranav Raj N K — pn2330
 - Mohamed Yaseen Mohamed Shuaib — mm14451
 
-**Course staff (collaborators to add):**
-
-- adithyab-20
-- ivanearisty
-- AranyaAryaman
-
 ## Prerequisites
 
-- Python 3.12 or higher (required by the shared `chat-client-api` package)
+- Python 3.12 or higher
 - [uv](https://docs.astral.sh/uv/) package manager
 
 ## Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/yuktakul04/CS-GY-9223-Open-Source.git
 cd CS-GY-9223-Open-Source
 
-# Install dependencies
 uv sync
-
-# Install with all dependencies (dev + docs)
 uv sync --all-extras
 ```
 
-The shared contract is installed from git, for example:
-
-`chat-client-api` ← [HarshithKoriRaj/Shared-API](https://github.com/HarshithKoriRaj/Shared-API) (see root `pyproject.toml` `[tool.uv.sources]`).
+The shared `chat-client-api` contract is installed from git; see the root
+`pyproject.toml` `[tool.uv.sources]` section.
 
 ## Development
 
 ```bash
-# Run tests
 uv run pytest
-
-# Run linting
 uv run ruff check .
-
-# Run type checking
 uv run mypy components tests
-```
-
-## Documentation
-
-```bash
-uv run mkdocs serve
 ```
 
 ## Deploying to Render
@@ -67,30 +46,154 @@ uv run mkdocs serve
 This repository includes a Render Blueprint at `render.yaml` for
 `chat_client_service`.
 
-1. In Render, create a new Blueprint service from this repo.
-2. Set required environment variables:
-   - `TELEGRAM_API_ID`
-   - `TELEGRAM_API_HASH`
-   - `TELEGRAM_BOT_TOKEN`
-   - `TELEGRAM_SESSION_STRING`
-   - `SERVICE_BASE_URL` (for example `https://<your-service>.onrender.com`)
-3. Deploy and verify:
-   - `GET /health` returns `{"status":"ok"}`
-   - `GET /auth/login` redirects to Telegram OAuth
+Minimal working Render setup:
 
-`TELEGRAM_BOT_TOKEN` is not enough for the full chat API. It is used for Telegram
-Login Widget verification and this service's Bearer-token signing. `GET
-/chat/messages` and `GET /chat/channels` require a Telethon user session string
-generated from a Telegram user account that can see the target chat.
+- `TELEGRAM_BOT_TOKEN`
+- `SERVICE_BASE_URL`
 
-Credential sources:
+That is the setup the experimental branch optimized for: set the bot token and
+base URL, then let the blueprint supply the rest.
 
-- `TELEGRAM_BOT_TOKEN`: create a bot with [BotFather](https://t.me/BotFather).
-- `TELEGRAM_API_ID` and `TELEGRAM_API_HASH`: create an app in [Telegram API development tools](https://core.telegram.org/api/obtaining_api_id).
-- `TELEGRAM_SESSION_STRING`: generate a [Telethon String Session](https://docs.telethon.dev/en/stable/concepts/sessions.html#string-sessions) from the Telegram user account used for read/list/send operations.
+The current `render.yaml` already provides defaults for:
 
-Do not commit `.env`, `*.session`, bot tokens, API hashes, or session strings.
-Treat `TELEGRAM_SESSION_STRING` like an account password.
+- `TELEGRAM_UPDATE_MODE=polling`
+- `TELEGRAM_POLL_INTERVAL_SECONDS=3`
+- `APP_SESSION_TTL_SECONDS=3600`
+- `CHAT_CLIENT_STORE_PATH=/tmp/chat_client.sqlite3`
+
+So on the free Render plan, you do not need to set those manually unless you
+are intentionally changing behavior.
+
+Important storage note:
+
+- the current free-plan blueprint uses `/tmp/chat_client.sqlite3`
+- that is writable on free Render, but it is ephemeral
+- if the service restarts or redeploys, auth sessions and stored bot-observed
+  messages can be lost
+
+If you move to a paid plan with a persistent disk, then switch to:
+
+- `CHAT_CLIENT_STORE_PATH=/var/data/chat_client.sqlite3`
+
+Optional variables:
+
+- `APP_SESSION_SECRET` (signing override; defaults to the bot token)
+- `APP_SESSION_TTL_SECONDS`
+- `TELEGRAM_OIDC_CLIENT_ID` (optional override; otherwise derived from the bot id)
+- `TELEGRAM_OIDC_CLIENT_SECRET` (optional override only for explicit code flow)
+- `TELEGRAM_WEBHOOK_SECRET`
+- `TELEGRAM_BOT_API_BASE_URL`
+
+Do not set optional variables unless you actually need them. The more you
+change away from the minimal working setup, the more ways there are to drift
+from the proven deployment path.
+
+## BotFather Setup
+
+Before deploying, create and configure the Telegram bot itself.
+
+Minimum setup:
+
+1. Open [@BotFather](https://t.me/BotFather)
+2. Run `/newbot`
+3. Choose the bot name and username
+4. Copy the generated token into `TELEGRAM_BOT_TOKEN`
+5. Open the bot in Telegram and verify the username shown by BotFather matches
+   the bot you intend to use for this service
+
+Optional but recommended:
+
+- set the bot description and about text in BotFather so users know what they
+  are authenticating against
+- set the bot commands if you want a cleaner Telegram UX
+
+Privacy mode:
+
+- private user-to-bot DMs do **not** require disabling privacy mode
+- group-message visibility **does** depend on privacy mode
+
+If you want the bot to observe ordinary group messages instead of only commands,
+replies, and messages explicitly directed at the bot, disable privacy mode in
+BotFather:
+
+1. Open [@BotFather](https://t.me/BotFather)
+2. Run `/setprivacy`
+3. Select your bot
+4. Choose `Disable`
+
+Equivalent UI path in BotFather:
+
+1. `/start`
+2. select the bot
+3. `Bot Settings`
+4. `Group Privacy`
+5. turn it off
+
+Telegram documents this behavior in the Bots FAQ and Bot Features pages:
+
+- [What messages will my bot get?](https://core.telegram.org/bots/faq)
+- [Privacy Mode](https://core.telegram.org/bots/features)
+
+## Telegram Service Semantics
+
+This is a bot-scoped Telegram implementation:
+
+- sends go out through the configured bot
+- reads return messages the bot observed or sent
+- `channel_id="me"` means the logged-in user's direct chat with the bot
+- `GET /chat/channels` returns chats known to the bot, not arbitrary Telegram dialogs
+
+Message responses return opaque ids in `channel_id:message_id` form. Pass that
+value directly to `DELETE /chat/messages/{message_id}`. If a client only has a
+simple message id, it must also provide channel context.
+
+If an example uses `OSSHWBOTTEST`, replace it with any group or channel where
+the bot is present.
+
+## Auth Flow
+
+The service uses Telegram Login/OIDC plus local service sessions for HTTP
+clients.
+
+Primary session-first path:
+
+1. `POST /auth/sessions`
+2. Open the returned `login_url`
+3. Complete Telegram login
+4. Poll `GET /auth/sessions/{session_id}` until `authenticated: true`
+5. Use `X-Session-ID: <session_id>` on `/chat/*`
+
+Login surfaces:
+
+- `GET /auth/login?flow=page` serves the hosted Telegram Login page
+- `GET /auth/login/config` returns `client_id` and `nonce` for custom frontends
+- `GET /auth/login?flow=code` forces Telegram OIDC Authorization Code Flow with PKCE
+- `GET /auth/callback?code=...&state=...` completes OIDC code flow
+- `POST /auth/callback` completes Telegram Login library `id_token` flow
+- `POST /auth/telegram-login` completes signed `tgAuthResult` browser-fragment flow
+
+Browser clients can use the HTTP-only `chat_client_session` cookie. Manual/API
+clients can use `X-Session-ID` or the returned Bearer token. Logout deletes the
+cookie and session-backed `X-Session-ID`; direct Bearer tokens remain valid
+until `APP_SESSION_TTL_SECONDS` expires.
+
+Telegram documents both login paths in
+[Log In With Telegram](https://core.telegram.org/bots/telegram-login). When
+`TELEGRAM_OIDC_CLIENT_SECRET` is configured, the service can use the standards-
+based Authorization Code + PKCE path. Without it, the hosted Telegram Login
+page and Login library remain available for the same local service session
+model.
+
+## Update Delivery
+
+Telegram delivers bot updates one way at a time:
+
+- `TELEGRAM_UPDATE_MODE=polling` starts the background `getUpdates` poller
+- `TELEGRAM_UPDATE_MODE=webhook` expects Telegram to POST to `/telegram/webhook`
+
+For Render, the recommended path is polling plus a persistent disk. Reads remain
+bot-scoped and return messages stored locally from webhook delivery, background
+polling, or messages sent through the service itself.
 
 ## Project Structure
 
@@ -100,45 +203,33 @@ Treat `TELEGRAM_SESSION_STRING` like an account password.
 │   ├── telegram_client_impl/              # Telegram ChatClient implementation
 │   ├── chat_client_service/               # FastAPI service wrapper
 │   ├── chat_client_service_api_client/    # Generated + stable service client
-│   └── chat_client_adapter/               # Adapter implementing shared ChatClient
-├── src/nyu_ospsd_chat/         # Root Hatch wheel meta-package
-├── tests/                      # Integration / e2e tests
-├── docs/                       # MkDocs documentation
-├── .circleci/                  # CircleCI CI/CD configuration
-├── pyproject.toml              # Project configuration
-└── README.md
+│   ├── chat_client_adapter/               # Adapter implementing shared ChatClient
+│   ├── issue_tracker_integration/         # Team integration component
+│   ├── ai_client_api/                     # Shared AI interface
+│   └── openai_client_impl/                # OpenAI implementation
+├── src/nyu_ospsd_chat/                    # Root Hatch wheel meta-package
+├── tests/                                 # Integration / e2e tests
+├── docs/                                  # MkDocs documentation
+├── .circleci/                             # CircleCI CI/CD configuration
+├── pyproject.toml                         # Workspace configuration
+└── render.yaml                            # Render blueprint
 ```
 
-## Dependency injection usage
+## Dependency Injection Usage
 
 ```python
-import telegram_client_impl  # registers the Telegram factory via register_client
+import telegram_client_impl
 from chat_client_api import get_client
 
 client = get_client()
 ```
 
-### Opaque Telegram `message_id`
+## Documentation
 
-Outbound `Message.message_id` values use `<chat_id>:<telegram_message_id>`. Parse with
-`split(":", 1)`. Invalid or missing messages raise `ValueError` where the shared API
-specifies it.
-
-### Environment
-
-- `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` — required for a live Telethon client
-- `TELEGRAM_BOT_TOKEN` — required for service login/Bearer signing; send-only fallback
-- `TELEGRAM_SESSION_STRING` — required for deployed read/list and preferred for send
-- `TELEGRAM_SESSION_NAME` — optional session file basename
-- `TELEGRAM_INTERACTIVE` — set to `1` / `true` / `yes` if you use interactive-oriented
-  config (factory reads env only; there is no `get_client(interactive=...)` on the shared API)
-
-Use `channel_id="me"` only for the Telegram user's Saved Messages. To send/read
-any real group or channel, call `GET /chat/channels` with a valid Bearer token,
-find the target by `name`, and pass that returned `id` as `channel_id`.
-If an example uses `OSSHWBOTTEST`, replace it with any group or channel of your
-choice.
+```bash
+uv run mkdocs serve
+```
 
 ## License
 
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See [LICENSE](LICENSE).

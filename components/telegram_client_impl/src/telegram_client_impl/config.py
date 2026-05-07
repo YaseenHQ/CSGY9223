@@ -4,29 +4,22 @@ from dataclasses import dataclass
 from os import getenv
 
 
-def _env_flag(name: str) -> bool:
-    return getenv(name, "").strip().lower() in ("1", "true", "yes", "on")
-
-
 @dataclass(frozen=True)
 class TelegramClientConfig:
-    """Configuration required to initialize a Telegram client scaffold."""
+    """Configuration required to initialize a Telegram Bot API client."""
 
-    api_id: str | None
-    api_hash: str | None
     bot_token: str | None
-    session_string: str | None = None
-    session_name: str = "telegram_session"
+    bot_api_base_url: str = "https://api.telegram.org"
     interactive: bool = False
 
     @classmethod
-    def from_env(cls) -> "TelegramClientConfig":
+    def from_env(cls, *, interactive: bool = False) -> "TelegramClientConfig":
         """Create config from environment variables only."""
         return cls(
-            api_id=getenv("TELEGRAM_API_ID"),
-            api_hash=getenv("TELEGRAM_API_HASH"),
             bot_token=getenv("TELEGRAM_BOT_TOKEN"),
-            session_string=getenv("TELEGRAM_SESSION_STRING"),
-            session_name=getenv("TELEGRAM_SESSION_NAME", "telegram_session"),
-            interactive=_env_flag("TELEGRAM_INTERACTIVE"),
+            bot_api_base_url=getenv(
+                "TELEGRAM_BOT_API_BASE_URL",
+                "https://api.telegram.org",
+            ),
+            interactive=interactive,
         )

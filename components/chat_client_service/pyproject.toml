@@ -9,6 +9,9 @@ dependencies = [
     "uvicorn>=0.30.0",
     "chat-client-api",
     "telegram-client-impl",
+    "httpx>=0.27.0",
+    "pydantic>=2.0.0",
+    "pyjwt[crypto]>=2.8.0",
     "python-dotenv>=1.1.0",
     "watchtower>=3.3.1",
 ]

@@ -16,14 +16,8 @@ def test_telegram_wiring_e2e() -> None:
     """Validate interface -> implementation wiring in an E2E-style path."""
     if getenv("TELEGRAM_E2E_ENABLED") != "1":
         pytest.skip("Set TELEGRAM_E2E_ENABLED=1 to run Telegram E2E test")
-    if not all(
-        getenv(k)
-        for k in ("TELEGRAM_API_ID", "TELEGRAM_API_HASH", "TELEGRAM_BOT_TOKEN")
-    ):
-        pytest.skip(
-            "Set TELEGRAM_API_ID, TELEGRAM_API_HASH, TELEGRAM_BOT_TOKEN "
-            "in CircleCI project settings to run E2E"
-        )
+    if not getenv("TELEGRAM_BOT_TOKEN"):
+        pytest.skip("Set TELEGRAM_BOT_TOKEN in CI settings to run Telegram E2E")
 
     importlib.import_module("telegram_client_impl")
     get_client = importlib.import_module("chat_client_api").get_client

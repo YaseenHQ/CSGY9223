@@ -20,7 +20,7 @@ from chat_client_service.routers.telegram import get_telegram_assistant
 from telegram_client_impl.store import get_store
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
 
 
 client = TestClient(app, follow_redirects=False)
@@ -168,6 +168,7 @@ def test_orchestrator_dispatches_chat_tool_calls_in_current_chat() -> None:
         _telegram_message_update(text="send a reply")
     )
 
+    assert reply is not None
     assert "Sent message 123:7" in reply
     chat_client.send_message.assert_any_call(channel_id="123", text="Roger that.")
     assert chat_client.send_message.call_count == 2
@@ -184,9 +185,14 @@ def test_build_ai_client_uses_registry_after_importing_provider(
     monkeypatch.setenv("CHAT_CLIENT_ASSISTANT_PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "gemini-test")
     monkeypatch.setattr("ai_client_api.get_client", get_client)
+
+    def _tracking_import(name: str) -> object:
+        imported.append(name)
+        return import_module(name)
+
     monkeypatch.setattr(
         "chat_client_service.assistant.importlib.import_module",
-        lambda name: imported.append(name) or import_module(name),
+        _tracking_import,
     )
 
     client_obj = _build_ai_client()
@@ -280,7 +286,7 @@ def test_update_poller_forwards_updates_to_callback() -> None:
             self,
             *,
             force: bool = False,
-            on_update: object = None,
+            on_update: Callable[[object], None] | None = None,
         ) -> None:
             assert force is True
             assert on_update is not None

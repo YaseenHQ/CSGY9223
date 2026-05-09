@@ -26,8 +26,7 @@ AI client components, and issue tracker integration.
 git clone https://github.com/yuktakul04/CS-GY-9223-Open-Source.git
 cd CS-GY-9223-Open-Source
 
-uv sync
-uv sync --all-extras
+uv sync --all-packages --extra dev
 ```
 
 The shared `chat-client-api` contract is installed from git; see the root
@@ -41,6 +40,32 @@ uv run ruff check .
 uv run mypy components tests
 ```
 
+## Local Service Startup
+
+From the repo root:
+
+```bash
+PYTHONPATH="$PWD/components/chat_client_service/src:$PWD/components/telegram_client_impl/src:$PWD/components/ai_client_api/src:$PWD/components/openai_client_impl/src:$PWD/components/gemini_client_impl/src:$PWD/components/issue_tracker_integration/src" \
+uv run --package chat-client-service python -m uvicorn "chat_client_service.app:app" --reload
+```
+
+Core environment variables:
+
+- `TELEGRAM_BOT_TOKEN`
+- `SERVICE_BASE_URL`
+- `TELEGRAM_UPDATE_MODE=polling` or `webhook`
+
+Optional AI assistant variables:
+
+- `CHAT_CLIENT_ASSISTANT_PROVIDER=openai` or `gemini`
+- `OPENAI_API_KEY` or `GEMINI_API_KEY`
+
+Optional issue tracker variables, only needed for issue-tracker AI tools:
+
+- `TRELLO_API_KEY`
+- `TRELLO_TOKEN`
+- `TRELLO_BOARD_ID`
+
 ## Deploying to Render
 
 This repository includes a Render Blueprint at `render.yaml` for
@@ -50,6 +75,7 @@ Minimal working Render setup:
 
 - `TELEGRAM_BOT_TOKEN`
 - `SERVICE_BASE_URL`
+- `GEMINI_API_KEY`
 
 That is the setup the experimental branch optimized for: set the bot token and
 base URL, then let the blueprint supply the rest.
@@ -163,6 +189,18 @@ Primary session-first path:
 4. Poll `GET /auth/sessions/{session_id}` until `authenticated: true`
 5. Use `X-Session-ID: <session_id>` on `/chat/*`
 
+Compact terminal flow:
+
+```bash
+curl -X POST "$BASE_URL/auth/sessions" > session.json
+open "$(python3 -c "import json; print(json.load(open('session.json'))['login_url'])")"
+export SESSION_ID="$(python3 -c "import json; print(json.load(open('session.json'))['session_id'])")"
+curl -H "X-Session-ID: $SESSION_ID" "$BASE_URL/auth/me"
+curl -X POST "$BASE_URL/chat/messages" -H "X-Session-ID: $SESSION_ID" -H "Content-Type: application/json" -d '{"channel_id":"me", "text":"hello"}'
+curl -H "X-Session-ID: $SESSION_ID" "$BASE_URL/chat/messages?channel_id=me"
+curl -H "X-Session-ID: $SESSION_ID" "$BASE_URL/chat/channels"
+```
+
 Login surfaces:
 
 - `GET /auth/login?flow=page` serves the hosted Telegram Login page
@@ -194,6 +232,53 @@ Telegram delivers bot updates one way at a time:
 For Render, the recommended path is polling plus a persistent disk. Reads remain
 bot-scoped and return messages stored locally from webhook delivery, background
 polling, or messages sent through the service itself.
+
+## AI Assistant Flow
+
+The AI assistant is invoked by inbound Telegram updates, not by
+`POST /chat/messages`.
+
+Plain AI replies require:
+
+- `CHAT_CLIENT_ASSISTANT_PROVIDER`
+- `OPENAI_API_KEY` or `GEMINI_API_KEY`
+
+Issue tracker tool calls additionally require:
+
+- `TRELLO_API_KEY`
+- `TRELLO_TOKEN`
+
+Webhook smoke test:
+
+```bash
+curl -i -X POST "$BASE_URL/telegram/webhook" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "update_id": 999004,
+    "message": {
+      "message_id": 45,
+      "date": 1715200000,
+      "text": "Reply exactly with HELLO_TEST_123",
+      "chat": {
+        "id": 123456789,
+        "type": "private",
+        "first_name": "Test"
+      },
+      "from": {
+        "id": 123456789,
+        "is_bot": false,
+        "first_name": "Test",
+        "username": "testuser"
+      }
+    }
+  }'
+```
+
+Expected behavior:
+
+- the webhook returns `204`
+- the assistant calls the configured AI provider
+- the bot replies in the referenced Telegram chat
 
 ## Project Structure
 

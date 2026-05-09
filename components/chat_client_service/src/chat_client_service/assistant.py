@@ -228,7 +228,7 @@ class TelegramAssistantOrchestrator:
     def __init__(
         self,
         ai_client: AIClient,
-        bridge: IssueTrackerBridge,
+        bridge: IssueTrackerBridge | None,
         chat_client: ChatClient,
     ) -> None:
         """Store collaborators used to fulfill Telegram assistant messages."""
@@ -264,9 +264,9 @@ def build_default_orchestrator(
     """Build the service-owned assistant from env-backed collaborators."""
     try:
         ai_client = _build_ai_client()
-        bridge = _build_issue_tracker_bridge()
     except RuntimeError:
         return None
+    bridge = _build_issue_tracker_bridge()
     return TelegramAssistantOrchestrator(ai_client, bridge, chat_client)
 
 
@@ -296,15 +296,11 @@ def _resolve_ai_provider_module(provider: str) -> str:
     raise RuntimeError(msg)
 
 
-def _build_issue_tracker_bridge() -> IssueTrackerBridge:
+def _build_issue_tracker_bridge() -> IssueTrackerBridge | None:
     api_key = os.getenv("TRELLO_API_KEY", "").strip()
     token = os.getenv("TRELLO_TOKEN", "").strip()
     if not api_key or not token:
-        msg = (
-            "Issue tracker bridge is not configured. Set TRELLO_API_KEY and "
-            "TRELLO_TOKEN for the Telegram assistant."
-        )
-        raise RuntimeError(msg)
+        return None
 
     board_id = os.getenv("TRELLO_BOARD_ID", "").strip() or None
     return get_bridge(
@@ -315,7 +311,7 @@ def _build_issue_tracker_bridge() -> IssueTrackerBridge:
 
 
 def _dispatch(
-    bridge: IssueTrackerBridge,
+    bridge: IssueTrackerBridge | None,
     chat_client: ChatClient,
     tool_call: ToolCallResponse,
     chat_id: str,
@@ -374,11 +370,14 @@ def _dispatch_chat_tool(  # noqa: PLR0911
 
 
 def _dispatch_issue_tracker_tool(  # noqa: PLR0911
-    bridge: IssueTrackerBridge,
+    bridge: IssueTrackerBridge | None,
     tool_call: ToolCallResponse,
 ) -> str:
     name = tool_call["name"]
     args = tool_call["arguments"]
+
+    if bridge is None:
+        return "Issue tracker integration is not configured."
 
     if name == "get_boards":
         boards = list(bridge.get_boards())

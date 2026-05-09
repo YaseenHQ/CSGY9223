@@ -14,6 +14,7 @@ from chat_client_service.app import app
 from chat_client_service.assistant import (
     TelegramAssistantOrchestrator,
     _build_ai_client,
+    build_default_orchestrator,
 )
 from chat_client_service.routers.telegram import get_telegram_assistant
 from telegram_client_impl.store import get_store
@@ -193,6 +194,49 @@ def test_build_ai_client_uses_registry_after_importing_provider(
     assert client_obj is sentinel
     assert imported == ["gemini_client_impl"]
     get_client.assert_called_once_with()
+
+
+def test_build_default_orchestrator_does_not_require_trello_for_plain_ai(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Assistant construction should succeed with AI config only."""
+    chat_client = Mock()
+    ai_client = Mock()
+
+    monkeypatch.setenv("CHAT_CLIENT_ASSISTANT_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-test")
+    monkeypatch.delenv("TRELLO_API_KEY", raising=False)
+    monkeypatch.delenv("TRELLO_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "chat_client_service.assistant._build_ai_client",
+        lambda: ai_client,
+    )
+
+    orchestrator = build_default_orchestrator(chat_client)
+
+    assert orchestrator is not None
+
+
+def test_orchestrator_raises_readable_error_for_issue_tools_without_trello() -> None:
+    """Issue-tracker tools should fail only when invoked without a configured bridge."""
+    ai_client = Mock()
+    ai_client.send_message.return_value = {
+        "name": "get_boards",
+        "arguments": {},
+    }
+    chat_client = Mock()
+
+    reply = TelegramAssistantOrchestrator(
+        ai_client=ai_client,
+        bridge=None,
+        chat_client=chat_client,
+    ).handle_update(_telegram_message_update(text="list boards"))
+
+    assert reply == "Issue tracker integration is not configured."
+    chat_client.send_message.assert_called_once_with(
+        channel_id="123",
+        text="Issue tracker integration is not configured.",
+    )
 
 
 def test_telegram_webhook_records_update_and_invokes_assistant() -> None:

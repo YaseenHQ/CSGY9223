@@ -41,6 +41,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         assistant = build_default_orchestrator(poller_chat_client)
         on_update = None
         if assistant is not None:
+
             def _on_update(update: dict[str, object]) -> None:
                 assistant.handle_update(update)
 

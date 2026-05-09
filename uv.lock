@@ -331,9 +331,14 @@ name = "chat-client-service"
 version = "0.1.0"
 source = { editable = "components/chat_client_service" }
 dependencies = [
+    { name = "ai-client-api" },
     { name = "chat-client-api" },
     { name = "fastapi" },
+    { name = "gemini-client-impl" },
     { name = "httpx" },
+    { name = "issue-tracker-client-impl" },
+    { name = "issue-tracker-integration" },
+    { name = "openai-client-impl" },
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "python-dotenv" },
@@ -344,9 +349,14 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "ai-client-api", editable = "components/ai_client_api" },
     { name = "chat-client-api", git = "https://github.com/HarshithKoriRaj/Shared-API.git" },
     { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "gemini-client-impl", editable = "components/gemini_client_impl" },
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "issue-tracker-client-impl", git = "https://github.com/somadisingh/ospsd-team7-issue-tracker.git?subdirectory=components%2Ftrello_client_impl" },
+    { name = "issue-tracker-integration", editable = "components/issue_tracker_integration" },
+    { name = "openai-client-impl", editable = "components/openai_client_impl" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.8.0" },
     { name = "python-dotenv", specifier = ">=1.1.0" },

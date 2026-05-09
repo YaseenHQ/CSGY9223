@@ -1,5 +1,7 @@
 """Gemini-backed :class:`ai_client_api.AIClient` implementation."""
 
-from gemini_client_impl.client import GeminiClient
+from ai_client_api import register_client
+from gemini_client_impl.client import GeminiClient as GeminiClient
+from gemini_client_impl.client import get_client_impl as get_client_impl
 
-__all__ = ["GeminiClient"]
+register_client(get_client_impl)

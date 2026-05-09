@@ -74,6 +74,11 @@ class GeminiClient(AIClient):
         return text
 
 
+def get_client_impl() -> AIClient:
+    """Construct the default Gemini-backed ``AIClient`` implementation."""
+    return GeminiClient()
+
+
 def _build_user_content(
     *,
     prompt: str,

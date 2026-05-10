@@ -60,11 +60,19 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           metrics = [
-            [ "OSPSD/HW3", "RequestLatency", "Service", "chat_client_service", { "stat": "Average", "label": "Avg Latency (ms)" } ]
+            [ { "expression": "SEARCH('{OSPSD/HW3, Service, Endpoint} MetricName=\"RequestLatency\" Service=\"chat_client_service\"', 'Average', 60)", "label": "$${LABEL} [avg: $${AVG}]", "id": "q1", "region": "us-east-1" } ]
           ]
-          view    = "timeSeries"
+          period  = 60
           region  = "us-east-1"
-          title   = "Request Latency (Requirement: Monitoring Latency)"
+          title   = "Request Latency (Monitoring Latency)"
+          view    = "timeSeries"
+          yAxis = {
+            left = {
+              label     = "Count"
+              showUnits = false
+            }
+          }
+          stat = "Average"
         }
       },
       {
@@ -75,12 +83,21 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           metrics = [
-            [ "OSPSD/HW3", "SuccessRate", "Service", "chat_client_service", { "stat": "Sum", "color": "#2ca02c" } ],
-            [ "OSPSD/HW3", "FailureRate", "Service", "chat_client_service", { "stat": "Sum", "color": "#d62728" } ]
+            [ { "expression": "SEARCH('{OSPSD/HW3, Service, Endpoint} MetricName=\"SuccessRate\" Service=\"chat_client_service\"', 'Sum', 60)", "label": "Successes", "id": "q1", "region": "us-east-1" } ],
+            [ { "expression": "SEARCH('{OSPSD/HW3, Service, Endpoint} MetricName=\"FailureRate\" Service=\"chat_client_service\"', 'Sum', 60)", "label": "Failures", "id": "q2", "region": "us-east-1" } ]
           ]
-          view    = "bar"
+          view    = "timeSeries"
+          stacked = false
           region  = "us-east-1"
-          title   = "Success vs Failure Rate (Requirement: Health Monitoring)"
+          title   = "Service Health: Success vs Failure Rate (Health Monitoring)"
+          yAxis = {
+            left = {
+              label     = "Count"
+              showUnits = false
+            }
+          }
+          stat   = "Average"
+          period = 300
         }
       }
     ]

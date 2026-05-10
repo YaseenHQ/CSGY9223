@@ -17,7 +17,7 @@ def _env_strip_default(name: str, default: str) -> str:
     if raw is None:
         return default
     stripped = raw.strip()
-    return stripped if stripped else default
+    return stripped or default
 
 
 @dataclass(frozen=True)

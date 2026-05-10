@@ -1093,7 +1093,7 @@ def test_oidc_config_allows_explicit_login_credential_overrides(
 def test_oidc_config_strips_whitespace_from_pasted_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Dashboard pastes often include trailing newlines; strip avoids httpx.InvalidURL."""
+    """Strip pasted whitespace to avoid invalid service URLs."""
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "\n123456:bot-secret\t")
     monkeypatch.setenv("SERVICE_BASE_URL", " https://svc.example/app \n")
     monkeypatch.delenv("TELEGRAM_OIDC_CLIENT_ID", raising=False)

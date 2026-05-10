@@ -18,7 +18,7 @@ _DEFAULT_STORE_PATH = ".data/chat_client.sqlite3"
 def _store_path_from_env() -> str:
     raw = os.getenv("CHAT_CLIENT_STORE_PATH", _DEFAULT_STORE_PATH)
     stripped = (raw or "").strip()
-    return stripped if stripped else _DEFAULT_STORE_PATH
+    return stripped or _DEFAULT_STORE_PATH
 
 
 @dataclass(frozen=True)

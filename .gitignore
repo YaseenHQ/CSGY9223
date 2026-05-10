@@ -80,3 +80,6 @@ site/
 infra/.terraform/
 infra/*.tfstate
 infra/*.tfstate.backup
+
+# Cursor project rules (local / machine-specific)
+.cursor/rules/

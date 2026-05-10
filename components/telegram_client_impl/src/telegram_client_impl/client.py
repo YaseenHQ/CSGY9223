@@ -199,8 +199,11 @@ class TelegramClient(ChatClient):
 
     @property
     def _api_base_url(self) -> str:
-        token = self._config.bot_token or ""
-        return f"{self._config.bot_api_base_url.rstrip('/')}/bot{token}"
+        token = (self._config.bot_token or "").strip()
+        base = (self._config.bot_api_base_url or "").strip().rstrip("/")
+        if not base:
+            base = "https://api.telegram.org"
+        return f"{base}/bot{token}"
 
     def _request(
         self,

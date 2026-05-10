@@ -46,8 +46,11 @@ def telegram_webhook(
     ] = None,
 ) -> None:
     """Record supported Telegram Bot API updates for later read endpoints."""
-    expected_secret = getenv("TELEGRAM_WEBHOOK_SECRET")
-    if expected_secret and not hmac.compare_digest(expected_secret, secret_token or ""):
+    raw_expected = getenv("TELEGRAM_WEBHOOK_SECRET")
+    expected_secret = raw_expected.strip() if raw_expected else ""
+    if expected_secret and not hmac.compare_digest(
+        expected_secret, (secret_token or "").strip()
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid Telegram webhook secret",

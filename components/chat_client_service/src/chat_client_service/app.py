@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from chat_client_api import ChatClient, get_client
@@ -137,6 +137,12 @@ async def unhandled_exception_handler(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": "Internal server error."},
     )
+
+
+@app.get("/demo", response_model=None, include_in_schema=False)
+def demo_ui() -> FileResponse:
+    """Serve the interactive demo dashboard."""
+    return FileResponse(_STATIC_DIR / "demo.html", media_type="text/html")
 
 
 @app.get("/health")

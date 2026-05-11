@@ -472,10 +472,10 @@
 <script>
 const API = window.location.origin;
 let sessionId = null;
-let sessionLoginUrl = null;
-let statusUrl = null;
-let pollTimer = null;
 let loginConfig = null;
+let _aiPollTimer = null;
+
+function maskId(id) { return id ? id.slice(0, 6) + '...' : 'n/a'; }
 
 /* ── Helpers ── */
 function headers() {
@@ -516,106 +516,136 @@ function setAuthed(username) {
   badge.className = 'badge';
   badge.textContent = 'Connected';
   if (username) {
-    info.innerHTML = `<span class="username">@${username}</span>` + info.innerHTML;
+    const userSpan = document.createElement('span');
+    userSpan.className = 'username';
+    userSpan.textContent = '@' + username;
+    info.insertBefore(userSpan, info.firstChild);
   }
-  document.querySelectorAll('button:disabled, input:disabled, select:disabled').forEach(el => {
-    el.disabled = false;
+  const interactiveIds = [
+    'btn-login', 'btn-check-status', 'btn-whoami', 'btn-logout',
+    'btn-refresh-messages', 'btn-send', 'chat-input', 'chat-channel',
+    'btn-refresh-channels', 'btn-ai-send', 'ai-input',
+    'btn-refresh-issues', 'btn-create-issue',
+    'issue-title', 'issue-desc', 'issue-status',
+  ];
+  interactiveIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.disabled = false;
   });
   document.getElementById('btn-create-session').disabled = true;
   document.getElementById('create-issue-form').style.display = 'flex';
 }
 
+function setLoading(buttonId, loading) {
+  const btn = document.getElementById(buttonId);
+  if (!btn) return;
+  if (loading) {
+    btn.disabled = true;
+    btn.dataset.origText = btn.textContent;
+    btn.innerHTML = btn.textContent + '<span class="spinner"></span>';
+  } else {
+    btn.disabled = false;
+    btn.textContent = btn.dataset.origText || btn.textContent;
+  }
+}
+
 /* ── Auth ── */
 
-// Inline Telegram login: create session, get login config, init widget, handle callback — all in one page
-document.getElementById('btn-create-session').addEventListener('click', async () => {
+async function initTelegramLogin() {
+  if (!window.Telegram || !window.Telegram.Login) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://oauth.telegram.org/js/telegram-login.js?3';
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+}
+
+let _telegramLoginCallback = null;
+_telegramLoginCallback = async (loginData) => {
+  const config = loginConfig;
+  if (!config) { authLog('No login config. Create a session first.'); return; }
+  if (!loginData || loginData.error) {
+    if (loginData && loginData.error === 'missing id_token') {
+      authLog('Redirecting to Telegram for hash-based login...');
+      localStorage.setItem('demo_session_id', sessionId);
+      localStorage.setItem('demo_login_nonce', config.nonce);
+      const params = new URLSearchParams({
+        response_type: 'fragment',
+        client_id: config.client_id,
+        redirect_uri: window.location.origin + '/demo',
+        scope: 'openid profile telegram:bot_access',
+        nonce: config.nonce,
+        origin: config.origin,
+      });
+      window.location.href = 'https://oauth.telegram.org/auth?' + params.toString();
+      return;
+    }
+    authLog(loginData && loginData.error ? loginData.error : 'Telegram login was cancelled.');
+    toast('Login cancelled', 'error');
+    return;
+  }
   try {
-    // 1. Create a session
+    if (loginData.id_token) {
+      await api('POST', '/auth/callback', { id_token: loginData.id_token, nonce: config.nonce });
+    } else if (loginData.hash) {
+      const bytes = new TextEncoder().encode(JSON.stringify(loginData));
+      let raw = '';
+      bytes.forEach(b => { raw += String.fromCharCode(b); });
+      const authResult = btoa(raw).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+      await api('POST', '/auth/telegram-login', {
+        auth_result: authResult,
+        state: config.nonce,
+        session_id: sessionId,
+      });
+    } else {
+      authLog('Telegram did not return login credentials.');
+      return;
+    }
+    const s = await api('GET', `/auth/sessions/${sessionId}`);
+    if (s.authenticated) {
+      localStorage.setItem('demo_session_id', sessionId);
+      authLog(`Authenticated as: ${s.name || s.username || s.telegram_id}`);
+      setAuthed(s.username);
+      toast('Logged in!', 'success');
+      loadChannels();
+      loadMessages('me');
+    } else {
+      authLog('Login completed but session not authenticated. Try again.');
+    }
+  } catch (e) {
+    authLog(`Login error: ${e.message}`);
+    toast(e.message, 'error');
+  }
+};
+
+document.getElementById('btn-create-session').addEventListener('click', async () => {
+  setLoading('btn-create-session', true);
+  try {
     const data = await api('POST', '/auth/sessions');
     sessionId = data.session_id;
-    authLog(`Session created: ${data.session_id}`);
+    localStorage.setItem('demo_session_id', sessionId);
+    authLog(`Session created: ${maskId(data.session_id)}`);
 
-    // 2. Get login config (client_id + nonce for this session)
     loginConfig = await api('GET', `/auth/login/config?session_id=${sessionId}`);
-    const config = loginConfig;
-    authLog('Telegram login ready. Click "Log in with Telegram" below.');
+    authLog('Telegram login ready. Click "Open Login" below.');
 
-    // 3. Load Telegram Login script and init
-    if (!window.Telegram || !window.Telegram.Login) {
-      await new Promise((resolve, reject) => {
-        const s = document.createElement('script');
-        s.src = 'https://oauth.telegram.org/js/telegram-login.js?3';
-        s.onload = resolve;
-        s.onerror = reject;
-        document.head.appendChild(s);
-      });
-    }
-
+    await initTelegramLogin();
     Telegram.Login.init(
-      { client_id: Number(config.client_id), request_access: ['write'], nonce: config.nonce },
-      async (loginData) => {
-        if (!loginData || loginData.error) {
-          if (loginData && loginData.error === 'missing id_token') {
-            // Fallback: try hash-based login via redirect
-            authLog('Redirecting to Telegram for hash-based login...');
-            const params = new URLSearchParams({
-              response_type: 'post_message',
-              client_id: config.client_id,
-              redirect_uri: window.location.origin + '/',
-              scope: 'openid profile telegram:bot_access',
-              nonce: config.nonce,
-              origin: config.origin,
-            });
-            window.location.href = 'https://oauth.telegram.org/auth?' + params.toString();
-            return;
-          }
-          authLog(loginData && loginData.error ? loginData.error : 'Telegram login was cancelled.');
-          toast('Login cancelled', 'error');
-          return;
-        }
-        // 4. Complete login based on what Telegram returned
-        try {
-          if (loginData.id_token) {
-            await api('POST', '/auth/callback', { id_token: loginData.id_token, nonce: config.nonce });
-          } else if (loginData.hash) {
-            const bytes = new TextEncoder().encode(JSON.stringify(loginData));
-            let raw = '';
-            bytes.forEach(b => { raw += String.fromCharCode(b); });
-            const authResult = btoa(raw).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
-            await api('POST', '/auth/telegram-login', {
-              auth_result: authResult,
-              state: config.nonce,
-              session_id: sessionId,
-            });
-          } else {
-            authLog('Telegram did not return login credentials.');
-            return;
-          }
-          // 5. Verify session is authenticated
-          const s = await api('GET', `/auth/sessions/${sessionId}`);
-          if (s.authenticated) {
-            authLog(`Authenticated as: ${s.name || s.username || s.telegram_id}`);
-            setAuthed(s.username);
-            toast('Logged in!', 'success');
-            loadChannels();
-            loadMessages('me');
-          } else {
-            authLog('Login completed but session not authenticated. Try again.');
-          }
-        } catch (e) {
-          authLog(`Login error: ${e.message}`);
-          toast(e.message, 'error');
-        }
-      }
+      { client_id: Number(loginConfig.client_id), request_access: ['write'], nonce: loginConfig.nonce },
+      _telegramLoginCallback
     );
 
-    // 5. Show login button
     document.getElementById('btn-login').disabled = false;
     document.getElementById('btn-check-status').disabled = false;
-    toast('Click "Log in with Telegram" to authenticate', 'success');
+    document.getElementById('btn-create-session').disabled = true;
+    toast('Click "Open Login" to authenticate', 'success');
   } catch (e) {
     authLog(`Error: ${e.message}`);
     toast(e.message, 'error');
+    setLoading('btn-create-session', false);
   }
 });
 
@@ -630,14 +660,14 @@ document.getElementById('btn-login').addEventListener('click', () => {
     if (typeof url === 'string' && url.startsWith('https://oauth.telegram.org/auth?')) {
       const authUrl = new URL(url);
       authUrl.searchParams.set('origin', origin);
-      authUrl.searchParams.set('redirect_uri', origin + '/');
+      authUrl.searchParams.set('redirect_uri', origin + '/demo');
       url = authUrl.toString();
       target = 'telegram_auth_popup';
     }
     return savedOpen.call(window, url, target, features);
   };
   try {
-    Telegram.Login.open();
+    Telegram.Login.open(_telegramLoginCallback);
   } finally {
     window.open = savedOpen;
   }
@@ -645,6 +675,7 @@ document.getElementById('btn-login').addEventListener('click', () => {
 
 document.getElementById('btn-check-status').addEventListener('click', async () => {
   if (!sessionId) { authLog('No session. Click "Create Session" first.'); return; }
+  setLoading('btn-check-status', true);
   try {
     const s = await api('GET', `/auth/sessions/${sessionId}`);
     authLog(`Status: authenticated=${s.authenticated}, user=${s.username || s.name || s.telegram_id || 'n/a'}`);
@@ -655,6 +686,8 @@ document.getElementById('btn-check-status').addEventListener('click', async () =
     }
   } catch (e) {
     authLog(`Error: ${e.message}`);
+  } finally {
+    setLoading('btn-check-status', false);
   }
 });
 
@@ -673,6 +706,7 @@ document.getElementById('btn-logout').addEventListener('click', async () => {
   try {
     await api('DELETE', `/auth/sessions/${sessionId}`);
     localStorage.removeItem('demo_session_id');
+    localStorage.removeItem('demo_login_nonce');
     authLog('Session deleted. Logged out.');
     toast('Logged out', 'info');
     location.reload();
@@ -690,20 +724,47 @@ async function loadMessages(channelId) {
       list.innerHTML = '<div class="empty-state">No messages yet</div>';
       return;
     }
-    list.innerHTML = msgs.map(m => `
-      <div class="message-item">
-        <div class="msg-content">
-          <div class="msg-sender">${esc(m.sender)}</div>
-          <div class="msg-text">${esc(m.text)}</div>
-          <div class="msg-time">${m.timestamp}</div>
-          <div class="msg-id">${m.id}</div>
-        </div>
-        <button class="btn-danger btn-sm" onclick="deleteMessage('${esc(m.id)}')">Del</button>
-      </div>
-    `).join('');
+    list.innerHTML = '';
+    msgs.forEach(m => {
+      const item = document.createElement('div');
+      item.className = 'message-item';
+
+      const content = document.createElement('div');
+      content.className = 'msg-content';
+
+      const sender = document.createElement('div');
+      sender.className = 'msg-sender';
+      sender.textContent = m.sender;
+
+      const text = document.createElement('div');
+      text.className = 'msg-text';
+      text.textContent = m.text;
+
+      const time = document.createElement('div');
+      time.className = 'msg-time';
+      time.textContent = m.timestamp;
+
+      const msgId = document.createElement('div');
+      msgId.className = 'msg-id';
+      msgId.textContent = m.id;
+
+      content.append(sender, text, time, msgId);
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn-danger btn-sm';
+      delBtn.textContent = 'Del';
+      delBtn.addEventListener('click', () => deleteMessage(m.id));
+
+      item.append(content, delBtn);
+      list.appendChild(item);
+    });
     list.scrollTop = list.scrollHeight;
   } catch (e) {
-    list.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`;
+    list.innerHTML = '';
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.textContent = e.message;
+    list.appendChild(empty);
   }
 }
 
@@ -753,24 +814,42 @@ async function loadChannels() {
       list.innerHTML = '<div class="empty-state">No channels found</div>';
       return;
     }
-    list.innerHTML = channels.map(c => `
-      <div class="channel-item" onclick="selectChannel('${esc(c.id)}')">
-        <span class="ch-name">${esc(c.name)}</span>
-        <span class="ch-type">${esc(c.channel_type)}</span>
-      </div>
-    `).join('');
-    select.innerHTML = '<option value="me">me (self)</option>' +
-      channels.map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
-  } catch (e) {
-    list.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`;
-  }
-}
+    list.innerHTML = '';
+    channels.forEach(c => {
+      const item = document.createElement('div');
+      item.className = 'channel-item';
+      item.addEventListener('click', () => {
+        document.getElementById('chat-channel').value = c.id;
+        loadMessages(c.id);
+        document.querySelectorAll('.channel-item').forEach(el => el.classList.remove('active'));
+        item.classList.add('active');
+      });
 
-function selectChannel(id) {
-  document.getElementById('chat-channel').value = id;
-  loadMessages(id);
-  document.querySelectorAll('.channel-item').forEach(el => el.classList.remove('active'));
-  event.currentTarget.classList.add('active');
+      const name = document.createElement('span');
+      name.className = 'ch-name';
+      name.textContent = c.name;
+
+      const type = document.createElement('span');
+      type.className = 'ch-type';
+      type.textContent = c.channel_type;
+
+      item.append(name, type);
+      list.appendChild(item);
+    });
+    select.innerHTML = '<option value="me">me (self)</option>';
+    channels.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name;
+      select.appendChild(opt);
+    });
+  } catch (e) {
+    list.innerHTML = '';
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.textContent = e.message;
+    list.appendChild(empty);
+  }
 }
 
 document.getElementById('btn-refresh-channels').addEventListener('click', loadChannels);
@@ -781,23 +860,31 @@ document.getElementById('ai-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') sendAiMessage();
 });
 
+function appendAiMsg(text, cls) {
+  const container = document.getElementById('ai-messages');
+  const div = document.createElement('div');
+  div.className = `ai-msg ${cls}`;
+  div.textContent = text;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
 async function sendAiMessage() {
   const input = document.getElementById('ai-input');
-  const container = document.getElementById('ai-messages');
   const text = input.value.trim();
   if (!text) return;
   input.value = '';
 
-  container.innerHTML += `<div class="ai-msg user">${esc(text)}</div>`;
-  container.scrollTop = container.scrollHeight;
+  appendAiMsg(text, 'user');
 
   try {
     const sent = await api('POST', '/chat/messages', { channel_id: 'me', text });
     toast('Message sent to bot', 'info');
 
+    if (_aiPollTimer) clearInterval(_aiPollTimer);
     let attempts = 0;
     const maxAttempts = 15;
-    const checkReply = setInterval(async () => {
+    _aiPollTimer = setInterval(async () => {
       attempts++;
       try {
         const msgs = await api('GET', '/chat/messages?channel_id=me&limit=5');
@@ -806,19 +893,18 @@ async function sendAiMessage() {
           m.timestamp >= sent.timestamp
         );
         if (botReply) {
-          clearInterval(checkReply);
-          container.innerHTML += `<div class="ai-msg bot">${esc(botReply.text)}</div>`;
-          container.scrollTop = container.scrollHeight;
+          clearInterval(_aiPollTimer);
+          _aiPollTimer = null;
+          appendAiMsg(botReply.text, 'bot');
         } else if (attempts >= maxAttempts) {
-          clearInterval(checkReply);
-          container.innerHTML += `<div class="ai-msg error">No reply received. The AI assistant may not be configured or may have hit a rate limit.</div>`;
-          container.scrollTop = container.scrollHeight;
+          clearInterval(_aiPollTimer);
+          _aiPollTimer = null;
+          appendAiMsg('No reply received. The AI assistant may not be configured or may have hit a rate limit.', 'error');
         }
       } catch (_) {}
     }, 2000);
   } catch (e) {
-    container.innerHTML += `<div class="ai-msg error">${esc(e.message)}</div>`;
-    container.scrollTop = container.scrollHeight;
+    appendAiMsg(e.message, 'error');
   }
 }
 
@@ -828,20 +914,9 @@ document.getElementById('btn-clear-ai').addEventListener('click', () => {
 });
 
 /* ── Trello ── */
-async function loadIssues() {
+function loadIssues() {
   const list = document.getElementById('issue-list');
-  try {
-    const me = await api('GET', '/auth/me');
-    const msgs = await api('POST', '/chat/messages', {
-      channel_id: 'me',
-      text: '/boards'
-    });
-    // For now use the AI to fetch boards via chat
-    // The trello integration works through the AI assistant in Telegram
-    list.innerHTML = '<div class="empty-state">Trello integration works through the AI Assistant panel. Try asking "Show me my Trello boards" or "Create an issue called Test on my board".</div>';
-  } catch (e) {
-    list.innerHTML = `<div class="empty-state">${esc(e.message)}</div>`;
-  }
+  list.innerHTML = '<div class="empty-state">Trello integration works through the AI Assistant panel. Try asking "Show me my Trello boards" or "Create an issue called Test on my board".</div>';
 }
 
 document.getElementById('btn-refresh-issues').addEventListener('click', loadIssues);
@@ -850,8 +925,8 @@ document.getElementById('btn-create-issue').addEventListener('click', async () =
   const title = document.getElementById('issue-title').value.trim();
   if (!title) { toast('Title is required', 'error'); return; }
   const desc = document.getElementById('issue-desc').value.trim();
-  const status = document.getElementById('issue-status').value;
-  const prompt = `Create a new issue titled "${title}"${desc ? ` with description "${desc}"` : ''} with status ${status.replace('_', ' ')} on my board`;
+  const issueStatus = document.getElementById('issue-status').value;
+  const prompt = `Create a new issue titled "${title}"${desc ? ` with description "${desc}"` : ''} with status ${issueStatus.replace('_', ' ')} on my board`;
 
   const input = document.getElementById('ai-input');
   input.value = prompt;
@@ -861,12 +936,92 @@ document.getElementById('btn-create-issue').addEventListener('click', async () =
   toast('Creating issue via AI...', 'info');
 });
 
-/* ── Utils ── */
-function esc(str) {
-  const div = document.createElement('div');
-  div.textContent = String(str);
-  return div.innerHTML;
+/* ── Handle #tgAuthResult on page load (redirect fallback) ── */
+async function handleAuthRedirect() {
+  const fragment = new URLSearchParams(window.location.hash.slice(1));
+  const authResult = fragment.get('tgAuthResult');
+  if (!authResult) return;
+
+  const savedSessionId = localStorage.getItem('demo_session_id');
+  const savedNonce = localStorage.getItem('demo_login_nonce');
+  if (!savedSessionId) {
+    authLog('Auth redirect received but no saved session. Please create a new session.');
+    return;
+  }
+
+  sessionId = savedSessionId;
+  authLog('Completing login from redirect...');
+  window.history.replaceState(null, '', '/demo');
+
+  try {
+    await api('POST', '/auth/telegram-login', {
+      auth_result: authResult,
+      state: savedNonce,
+      session_id: sessionId,
+    });
+    const s = await api('GET', `/auth/sessions/${sessionId}`);
+    if (s.authenticated) {
+      authLog(`Authenticated as: ${s.name || s.username || s.telegram_id}`);
+      setAuthed(s.username);
+      toast('Logged in!', 'success');
+      loadChannels();
+      loadMessages('me');
+    } else {
+      authLog('Login completed but session not authenticated. Try again.');
+    }
+  } catch (e) {
+    authLog(`Login error: ${e.message}`);
+    toast(e.message, 'error');
+  }
+  localStorage.removeItem('demo_login_nonce');
 }
+
+/* ── Restore session on page load ── */
+async function restoreSession() {
+  const saved = localStorage.getItem('demo_session_id');
+  if (!saved) return;
+  try {
+    const s = await api('GET', `/auth/sessions/${saved}`);
+    if (s.authenticated) {
+      sessionId = saved;
+      authLog(`Session restored: ${maskId(saved)}`);
+      authLog(`Authenticated as: ${s.name || s.username || s.telegram_id}`);
+      setAuthed(s.username);
+      loadChannels();
+      loadMessages('me');
+    } else {
+      localStorage.removeItem('demo_session_id');
+    }
+  } catch (_) {
+    localStorage.removeItem('demo_session_id');
+  }
+}
+
+/* ── postMessage listener for popup auth completion ── */
+window.addEventListener('message', async (event) => {
+  if (event.origin !== window.location.origin) return;
+  if (!event.data || event.data.type !== 'telegram-auth-complete') return;
+  if (!sessionId) return;
+  try {
+    const s = await api('GET', `/auth/sessions/${sessionId}`);
+    if (s.authenticated) {
+      authLog(`Authenticated as: ${s.name || s.username || s.telegram_id}`);
+      setAuthed(s.username);
+      toast('Logged in!', 'success');
+      loadChannels();
+      loadMessages('me');
+    }
+  } catch (_) {}
+});
+
+/* ── Init ── */
+(async () => {
+  if (window.location.hash.includes('tgAuthResult')) {
+    await handleAuthRedirect();
+  } else {
+    await restoreSession();
+  }
+})();
 </script>
 
 </body>

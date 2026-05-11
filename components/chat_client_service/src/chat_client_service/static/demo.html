@@ -475,6 +475,7 @@ let sessionId = null;
 let sessionLoginUrl = null;
 let statusUrl = null;
 let pollTimer = null;
+let loginConfig = null;
 
 /* ── Helpers ── */
 function headers() {
@@ -535,7 +536,8 @@ document.getElementById('btn-create-session').addEventListener('click', async ()
     authLog(`Session created: ${data.session_id}`);
 
     // 2. Get login config (client_id + nonce for this session)
-    const config = await api('GET', `/auth/login/config?session_id=${sessionId}`);
+    loginConfig = await api('GET', `/auth/login/config?session_id=${sessionId}`);
+    const config = loginConfig;
     authLog('Telegram login ready. Click "Log in with Telegram" below.');
 
     // 3. Load Telegram Login script and init
@@ -618,11 +620,27 @@ document.getElementById('btn-create-session').addEventListener('click', async ()
 });
 
 document.getElementById('btn-login').addEventListener('click', () => {
-  if (!window.Telegram || !window.Telegram.Login) {
+  if (!window.Telegram || !window.Telegram.Login || !loginConfig) {
     authLog('Click "Create Session" first to initialize Telegram login.');
     return;
   }
-  Telegram.Login.open();
+  const origin = loginConfig.origin;
+  const savedOpen = window.open;
+  window.open = function(url, target, features) {
+    if (typeof url === 'string' && url.startsWith('https://oauth.telegram.org/auth?')) {
+      const authUrl = new URL(url);
+      authUrl.searchParams.set('origin', origin);
+      authUrl.searchParams.set('redirect_uri', origin + '/');
+      url = authUrl.toString();
+      target = 'telegram_auth_popup';
+    }
+    return savedOpen.call(window, url, target, features);
+  };
+  try {
+    Telegram.Login.open();
+  } finally {
+    window.open = savedOpen;
+  }
 });
 
 document.getElementById('btn-check-status').addEventListener('click', async () => {

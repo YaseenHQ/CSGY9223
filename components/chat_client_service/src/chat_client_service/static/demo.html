@@ -525,12 +525,40 @@ function setAuthed(username) {
 }
 
 /* ── Auth ── */
+
+// Restore session from localStorage on page load (after login redirect)
+(async function restoreSession() {
+  const saved = localStorage.getItem('demo_session_id');
+  if (!saved) return;
+  sessionId = saved;
+  authLog(`Restored session: ${sessionId}`);
+  try {
+    const s = await api('GET', `/auth/sessions/${sessionId}`);
+    if (s.authenticated) {
+      authLog(`Authenticated as: ${s.username || s.telegram_id}`);
+      setAuthed(s.username);
+      toast('Logged in!', 'success');
+      loadChannels();
+      loadMessages('me');
+    } else {
+      authLog('Session restored but not yet authenticated. Complete login or click Check Status.');
+      document.getElementById('btn-login').disabled = false;
+      document.getElementById('btn-check-status').disabled = false;
+      sessionLoginUrl = `${API}/auth/login?session_id=${sessionId}&flow=page`;
+    }
+  } catch (e) {
+    localStorage.removeItem('demo_session_id');
+    authLog('Saved session expired. Create a new one.');
+  }
+})();
+
 document.getElementById('btn-create-session').addEventListener('click', async () => {
   try {
     const data = await api('POST', '/auth/sessions');
     sessionId = data.session_id;
     sessionLoginUrl = data.login_url;
     statusUrl = `/auth/sessions/${data.session_id}`;
+    localStorage.setItem('demo_session_id', sessionId);
     authLog(`Session created: ${data.session_id}`);
     authLog(`Login URL: ${data.login_url}`);
     document.getElementById('btn-login').disabled = false;
@@ -544,13 +572,17 @@ document.getElementById('btn-create-session').addEventListener('click', async ()
 
 document.getElementById('btn-login').addEventListener('click', () => {
   if (!sessionLoginUrl) return;
-  window.open(sessionLoginUrl, 'telegram_login', 'width=550,height=600');
-  authLog('Login window opened. Complete Telegram login...');
+  // Open login in a new tab instead of a popup for reliable auth
+  window.open(sessionLoginUrl, '_blank');
+  authLog('Login tab opened. Complete Telegram login, then come back and click "Check Status".');
+  // Also start polling in case the session gets authenticated
+  if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
     try {
       const s = await api('GET', `/auth/sessions/${sessionId}`);
       if (s.authenticated) {
         clearInterval(pollTimer);
+        pollTimer = null;
         authLog(`Authenticated as: ${s.username || s.telegram_id}`);
         setAuthed(s.username);
         toast('Logged in!', 'success');
@@ -558,7 +590,7 @@ document.getElementById('btn-login').addEventListener('click', () => {
         loadMessages('me');
       }
     } catch (_) {}
-  }, 2000);
+  }, 3000);
 });
 
 document.getElementById('btn-check-status').addEventListener('click', async () => {
@@ -589,6 +621,7 @@ document.getElementById('btn-whoami').addEventListener('click', async () => {
 document.getElementById('btn-logout').addEventListener('click', async () => {
   try {
     await api('DELETE', `/auth/sessions/${sessionId}`);
+    localStorage.removeItem('demo_session_id');
     authLog('Session deleted. Logged out.');
     toast('Logged out', 'info');
     location.reload();

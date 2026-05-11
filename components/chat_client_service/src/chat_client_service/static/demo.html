@@ -484,7 +484,7 @@ function headers() {
 }
 
 async function api(method, path, body) {
-  const opts = { method, headers: headers() };
+  const opts = { method, headers: headers(), credentials: 'same-origin' };
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(API + path, opts);
   if (!r.ok) {
@@ -526,12 +526,26 @@ function setAuthed(username) {
 
 /* ── Auth ── */
 
-// Restore session from localStorage on page load (after login redirect)
-(async function restoreSession() {
+// Try cookie-based auth on page load (works after login in any tab)
+(async function autoDetectSession() {
+  // First try cookie-based auth (set by the login flow automatically)
+  try {
+    const me = await fetch(API + '/auth/me', { credentials: 'same-origin' });
+    if (me.ok) {
+      const data = await me.json();
+      authLog(`Auto-detected login via cookie: ${data.name || data.username || data.telegram_id}`);
+      setAuthed(data.username);
+      toast('Logged in!', 'success');
+      loadChannels();
+      loadMessages('me');
+      return;
+    }
+  } catch (_) {}
+
+  // Fall back to saved session ID
   const saved = localStorage.getItem('demo_session_id');
   if (!saved) return;
   sessionId = saved;
-  authLog(`Restored session: ${sessionId}`);
   try {
     const s = await api('GET', `/auth/sessions/${sessionId}`);
     if (s.authenticated) {
@@ -541,14 +555,13 @@ function setAuthed(username) {
       loadChannels();
       loadMessages('me');
     } else {
-      authLog('Session restored but not yet authenticated. Complete login or click Check Status.');
+      authLog('Session not yet authenticated. Click "Open Login" to continue.');
       document.getElementById('btn-login').disabled = false;
       document.getElementById('btn-check-status').disabled = false;
       sessionLoginUrl = `${API}/auth/login?session_id=${sessionId}&flow=page`;
     }
   } catch (e) {
     localStorage.removeItem('demo_session_id');
-    authLog('Saved session expired. Create a new one.');
   }
 })();
 
@@ -560,7 +573,6 @@ document.getElementById('btn-create-session').addEventListener('click', async ()
     statusUrl = `/auth/sessions/${data.session_id}`;
     localStorage.setItem('demo_session_id', sessionId);
     authLog(`Session created: ${data.session_id}`);
-    authLog(`Login URL: ${data.login_url}`);
     document.getElementById('btn-login').disabled = false;
     document.getElementById('btn-check-status').disabled = false;
     toast('Session created', 'success');
@@ -572,13 +584,24 @@ document.getElementById('btn-create-session').addEventListener('click', async ()
 
 document.getElementById('btn-login').addEventListener('click', () => {
   if (!sessionLoginUrl) return;
-  // Open login in a new tab instead of a popup for reliable auth
   window.open(sessionLoginUrl, '_blank');
   authLog('Login tab opened. Complete Telegram login, then come back and click "Check Status".');
-  // Also start polling in case the session gets authenticated
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
     try {
+      // Check both cookie-based auth and session-based auth
+      const cookieCheck = await fetch(API + '/auth/me', { credentials: 'same-origin' });
+      if (cookieCheck.ok) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        const me = await cookieCheck.json();
+        authLog(`Authenticated as: ${me.name || me.username || me.telegram_id}`);
+        setAuthed(me.username);
+        toast('Logged in!', 'success');
+        loadChannels();
+        loadMessages('me');
+        return;
+      }
       const s = await api('GET', `/auth/sessions/${sessionId}`);
       if (s.authenticated) {
         clearInterval(pollTimer);
@@ -594,10 +617,24 @@ document.getElementById('btn-login').addEventListener('click', () => {
 });
 
 document.getElementById('btn-check-status').addEventListener('click', async () => {
+  // Try cookie-based auth first
+  try {
+    const cookieCheck = await fetch(API + '/auth/me', { credentials: 'same-origin' });
+    if (cookieCheck.ok) {
+      const me = await cookieCheck.json();
+      authLog(`Authenticated via cookie: ${me.name || me.username || me.telegram_id}`);
+      setAuthed(me.username);
+      loadChannels();
+      loadMessages('me');
+      return;
+    }
+  } catch (_) {}
+  // Fall back to session ID check
+  if (!sessionId) { authLog('No session. Click "Create Session" first.'); return; }
   try {
     const s = await api('GET', `/auth/sessions/${sessionId}`);
     authLog(`Status: authenticated=${s.authenticated}, user=${s.username || s.telegram_id || 'n/a'}`);
-    if (s.authenticated && !document.querySelector('.badge:not(.disconnected)')) {
+    if (s.authenticated) {
       setAuthed(s.username);
       loadChannels();
       loadMessages('me');
@@ -611,7 +648,7 @@ document.getElementById('btn-whoami').addEventListener('click', async () => {
   try {
     const me = await api('GET', '/auth/me');
     authLog(`Identity: telegram_id=${me.telegram_id}, username=${me.username}, name=${me.name}`);
-    toast(`Logged in as @${me.username}`, 'info');
+    toast(`Logged in as ${me.name || me.username}`, 'info');
   } catch (e) {
     authLog(`Error: ${e.message}`);
     toast(e.message, 'error');

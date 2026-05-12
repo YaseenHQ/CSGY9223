@@ -551,76 +551,6 @@ function setLoading(buttonId, loading) {
 
 /* ── Auth ── */
 
-async function initTelegramLogin() {
-  if (!window.Telegram || !window.Telegram.Login) {
-    await new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = 'https://oauth.telegram.org/js/telegram-login.js?3';
-      s.onload = resolve;
-      s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
-}
-
-let _telegramLoginCallback = null;
-_telegramLoginCallback = async (loginData) => {
-  const config = loginConfig;
-  if (!config) { authLog('No login config. Create a session first.'); return; }
-  if (!loginData || loginData.error) {
-    if (loginData && loginData.error === 'missing id_token') {
-      authLog('Redirecting to Telegram for hash-based login...');
-      localStorage.setItem('demo_session_id', sessionId);
-      localStorage.setItem('demo_login_nonce', config.nonce);
-      const params = new URLSearchParams({
-        response_type: 'fragment',
-        client_id: config.client_id,
-        redirect_uri: window.location.origin + '/demo',
-        scope: 'openid profile telegram:bot_access',
-        nonce: config.nonce,
-        origin: config.origin,
-      });
-      window.location.href = 'https://oauth.telegram.org/auth?' + params.toString();
-      return;
-    }
-    authLog(loginData && loginData.error ? loginData.error : 'Telegram login was cancelled.');
-    toast('Login cancelled', 'error');
-    return;
-  }
-  try {
-    if (loginData.id_token) {
-      await api('POST', '/auth/callback', { id_token: loginData.id_token, nonce: config.nonce });
-    } else if (loginData.hash) {
-      const bytes = new TextEncoder().encode(JSON.stringify(loginData));
-      let raw = '';
-      bytes.forEach(b => { raw += String.fromCharCode(b); });
-      const authResult = btoa(raw).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
-      await api('POST', '/auth/telegram-login', {
-        auth_result: authResult,
-        state: config.nonce,
-        session_id: sessionId,
-      });
-    } else {
-      authLog('Telegram did not return login credentials.');
-      return;
-    }
-    const s = await api('GET', `/auth/sessions/${sessionId}`);
-    if (s.authenticated) {
-      localStorage.setItem('demo_session_id', sessionId);
-      authLog(`Authenticated as: ${s.name || s.username || s.telegram_id}`);
-      setAuthed(s.username);
-      toast('Logged in!', 'success');
-      loadChannels();
-      loadMessages('me');
-    } else {
-      authLog('Login completed but session not authenticated. Try again.');
-    }
-  } catch (e) {
-    authLog(`Login error: ${e.message}`);
-    toast(e.message, 'error');
-  }
-};
-
 document.getElementById('btn-create-session').addEventListener('click', async () => {
   setLoading('btn-create-session', true);
   try {
@@ -631,12 +561,6 @@ document.getElementById('btn-create-session').addEventListener('click', async ()
 
     loginConfig = await api('GET', `/auth/login/config?session_id=${sessionId}`);
     authLog('Telegram login ready. Click "Open Login" below.');
-
-    await initTelegramLogin();
-    Telegram.Login.init(
-      { client_id: Number(loginConfig.client_id), request_access: ['write'], nonce: loginConfig.nonce },
-      _telegramLoginCallback
-    );
 
     document.getElementById('btn-login').disabled = false;
     document.getElementById('btn-check-status').disabled = false;
@@ -650,27 +574,20 @@ document.getElementById('btn-create-session').addEventListener('click', async ()
 });
 
 document.getElementById('btn-login').addEventListener('click', () => {
-  if (!window.Telegram || !window.Telegram.Login || !loginConfig) {
-    authLog('Click "Create Session" first to initialize Telegram login.');
+  if (!loginConfig) {
+    authLog('Click "Create Session" first.');
     return;
   }
-  const origin = loginConfig.origin;
-  const savedOpen = window.open;
-  window.open = function(url, target, features) {
-    if (typeof url === 'string' && url.startsWith('https://oauth.telegram.org/auth?')) {
-      const authUrl = new URL(url);
-      authUrl.searchParams.set('origin', origin);
-      authUrl.searchParams.set('redirect_uri', origin + '/demo');
-      url = authUrl.toString();
-      target = 'telegram_auth_popup';
-    }
-    return savedOpen.call(window, url, target, features);
-  };
-  try {
-    Telegram.Login.open(_telegramLoginCallback);
-  } finally {
-    window.open = savedOpen;
-  }
+  localStorage.setItem('demo_session_id', sessionId);
+  localStorage.setItem('demo_login_nonce', loginConfig.nonce);
+  const params = new URLSearchParams({
+    bot_id: loginConfig.client_id,
+    origin: loginConfig.origin,
+    embed: '0',
+    request_access: 'write',
+    return_to: window.location.origin + '/demo',
+  });
+  window.location.href = 'https://oauth.telegram.org/auth?' + params.toString();
 });
 
 document.getElementById('btn-check-status').addEventListener('click', async () => {

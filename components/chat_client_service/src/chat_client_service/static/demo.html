@@ -795,66 +795,8 @@ async function sendAiMessage() {
   appendAiMsg(text, 'user');
 
   try {
-    const me = await api('GET', '/auth/me');
-    const telegramId = String(me.telegram_id || '').trim();
-    if (!telegramId) {
-      throw new Error('Authenticated session has no Telegram identity.');
-    }
-
-    const numericTelegramId = Number(telegramId);
-    if (!Number.isFinite(numericTelegramId)) {
-      throw new Error('Telegram identity is not numeric.');
-    }
-
-    const messageId = Date.now();
-    const sentAfterIso = new Date((Math.floor(messageId / 1000) - 1) * 1000).toISOString();
-    const firstName = String(me.name || me.username || 'Telegram User').trim() || 'Telegram User';
-
-    const update = {
-      update_id: messageId,
-      message: {
-        message_id: messageId,
-        date: Math.floor(messageId / 1000),
-        text,
-        chat: {
-          id: numericTelegramId,
-          type: 'private',
-          first_name: firstName,
-        },
-        from: {
-          id: numericTelegramId,
-          is_bot: false,
-          first_name: firstName,
-          username: me.username || undefined,
-        },
-      },
-    };
-
-    await api('POST', '/telegram/webhook', update);
-    toast('Message sent to assistant', 'info');
-
-    if (_aiPollTimer) clearInterval(_aiPollTimer);
-    let attempts = 0;
-    const maxAttempts = 20;
-    _aiPollTimer = setInterval(async () => {
-      attempts++;
-      try {
-        const msgs = await api('GET', '/chat/messages?channel_id=me&limit=10');
-        const botReply = msgs.find(m =>
-          m.sender !== telegramId &&
-          m.timestamp >= sentAfterIso
-        );
-        if (botReply) {
-          clearInterval(_aiPollTimer);
-          _aiPollTimer = null;
-          appendAiMsg(botReply.text, 'bot');
-        } else if (attempts >= maxAttempts) {
-          clearInterval(_aiPollTimer);
-          _aiPollTimer = null;
-          appendAiMsg('No reply received. The AI assistant may not be configured or may have hit a rate limit.', 'error');
-        }
-      } catch (_) {}
-    }, 2000);
+    const response = await api('POST', '/chat/assistant', { text });
+    appendAiMsg(response.reply, 'bot');
   } catch (e) {
     appendAiMsg(e.message, 'error');
   }

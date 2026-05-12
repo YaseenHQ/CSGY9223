@@ -34,6 +34,18 @@ class SendMessageRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4096)
 
 
+class AssistantRequest(BaseModel):
+    """Request body for dashboard assistant prompts."""
+
+    text: str = Field(min_length=1, max_length=4096)
+
+
+class AssistantResponse(BaseModel):
+    """Response body for dashboard assistant prompts."""
+
+    reply: str
+
+
 class DeleteMessageResponse(BaseModel):
     """Response body for deleting a message."""
 

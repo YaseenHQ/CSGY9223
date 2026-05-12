@@ -6,7 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 import telegram_client_impl  # noqa: F401
 from chat_client_api import Channel, ChatClient, Message, get_client
+from chat_client_service.assistant import build_default_orchestrator
 from chat_client_service.models import (
+    AssistantRequest,
+    AssistantResponse,
     ChannelModel,
     DeleteMessageResponse,
     MessageModel,
@@ -30,6 +33,13 @@ router = APIRouter(
 def get_chat_client() -> ChatClient:
     """FastAPI dependency that returns a Telegram-backed ChatClient."""
     return get_client()
+
+
+def get_dashboard_assistant(
+    client: Annotated[ChatClient, Depends(get_chat_client)],
+):
+    """Return the env-configured assistant for dashboard prompts."""
+    return build_default_orchestrator(client)
 
 
 class MessageListQuery:
@@ -84,6 +94,38 @@ def send_message(
             detail=str(exc),
         ) from exc
     return _message_model(msg)
+
+
+@router.post("/assistant")
+def send_assistant_message(
+    payload: AssistantRequest,
+    claims: Annotated[dict[str, str], Depends(get_current_claims)],
+    assistant=Depends(get_dashboard_assistant),
+) -> AssistantResponse:
+    """Process a dashboard assistant prompt without sending the reply to Telegram."""
+    telegram_id = claims.get("telegram_id")
+    if not telegram_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authenticated session has no Telegram identity.",
+        )
+    if assistant is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI assistant is not configured.",
+        )
+    try:
+        reply = assistant.handle_message(
+            chat_id=telegram_id,
+            user_message=payload.text,
+            deliver_reply=False,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    return AssistantResponse(reply=reply)
 
 
 @router.get("/messages")

@@ -246,8 +246,14 @@ class TelegramAssistantOrchestrator:
             return None
         return self.handle_message(chat_id=message.chat_id, user_message=message.text)
 
-    def handle_message(self, *, chat_id: str, user_message: str) -> str:
-        """Process one inbound Telegram message and post the reply."""
+    def handle_message(
+        self,
+        *,
+        chat_id: str,
+        user_message: str,
+        deliver_reply: bool = True,
+    ) -> str:
+        """Process one inbound Telegram message and optionally post the reply."""
         response = self._ai.send_message(
             prompt=user_message,
             context={"system": _SYSTEM_PROMPT},
@@ -257,7 +263,8 @@ class TelegramAssistantOrchestrator:
             reply = _dispatch(self._bridge, self._chat, response, chat_id)
         else:
             reply = response
-        self._chat.send_message(channel_id=chat_id, text=reply)
+        if deliver_reply:
+            self._chat.send_message(channel_id=chat_id, text=reply)
         return reply
 
 

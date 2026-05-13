@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+LOGGER = logging.getLogger(__name__)
 
 from api.issue import Status
 from trello_client_impl import TrelloClient
@@ -265,8 +268,12 @@ def build_default_orchestrator(
     try:
         ai_client = _build_ai_client()
     except RuntimeError:
+        LOGGER.warning("AI client not configured — assistant disabled", exc_info=True)
         return None
     bridge = _build_issue_tracker_bridge()
+    if bridge is None:
+        LOGGER.info("Trello not configured — issue tracker tools disabled")
+    LOGGER.info("Telegram assistant orchestrator started")
     return TelegramAssistantOrchestrator(ai_client, bridge, chat_client)
 
 

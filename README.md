@@ -66,53 +66,136 @@ Optional issue tracker variables, only needed for issue-tracker AI tools:
 - `TRELLO_TOKEN`
 - `TRELLO_BOARD_ID`
 
-## Deploying to Render
+## Deploying with Terraform
 
-This repository includes a Render Blueprint at `render.yaml` for
-`chat_client_service`.
+Terraform in `infra/` is the authoritative deployment path for HW3:
 
-Minimal working Render setup:
+- AWS resources in Terraform provision the CloudWatch telemetry layer
+- Render resources in Terraform provision the application runtime
 
+The legacy `render.yaml` remains in the repo only as reference. It is no longer
+the source of truth once the Terraform-managed Render service is used.
+
+### Required credentials
+
+The repo now includes `scripts/terraform-with-env.sh`, which sources `.env`
+and maps the existing simple variable names onto the `TF_VAR_*` aliases
+Terraform expects.
+
+Minimal `.env` setup for Terraform:
+
+- `RENDER_API_KEY`
+- `RENDER_OWNER_ID`
+- `RENDER_SERVICE_PLAN`
 - `TELEGRAM_BOT_TOKEN`
 - `SERVICE_BASE_URL`
-- `GEMINI_API_KEY`
+- `GEMINI_API_KEY` or `OPENAI_API_KEY`
 
-That is the setup the experimental branch optimized for: set the bot token and
-base URL, then let the blueprint supply the rest.
+Optional `.env` values that the wrapper also maps for Terraform:
 
-The current `render.yaml` already provides defaults for:
+- `RENDER_REPO_BRANCH`
+- `RENDER_REPO_URL`
+- `APP_SESSION_SECRET`
+- `TELEGRAM_OIDC_CLIENT_ID`
+- `TELEGRAM_OIDC_CLIENT_SECRET`
+- `TELEGRAM_WEBHOOK_SECRET`
+- `TRELLO_API_KEY`
+- `TRELLO_TOKEN`
+- `TRELLO_BOARD_ID`
+- `CHAT_CLIENT_ASSISTANT_PROVIDER`
+- `CHAT_CLIENT_STORE_PATH`
+- `TELEGRAM_UPDATE_MODE`
+- `TELEGRAM_POLL_INTERVAL_SECONDS`
+- `APP_SESSION_TTL_SECONDS`
+
+### Bring up the IaC stack
+
+From the repository root, create or update `.env` with the values above. For
+the current Render free-tier deployment, use:
+
+```bash
+RENDER_SERVICE_PLAN=free
+RENDER_REPO_BRANCH=gemini-client
+TELEGRAM_UPDATE_MODE=polling
+CHAT_CLIENT_ASSISTANT_PROVIDER=gemini
+```
+
+Then initialize Terraform and verify the configuration:
+
+```bash
+scripts/terraform-with-env.sh init
+scripts/terraform-with-env.sh validate
+```
+
+Preview the full infrastructure change before creating resources:
+
+```bash
+scripts/terraform-with-env.sh plan
+```
+
+Apply the stack when the plan shows the expected Render web service and
+CloudWatch resources:
+
+```bash
+scripts/terraform-with-env.sh apply
+```
+
+After apply, inspect the created resources:
+
+```bash
+scripts/terraform-with-env.sh output
+```
+
+The output includes:
+
+- `render_service_id`
+- `render_service_slug`
+- `render_service_url`
+- `cloudwatch_dashboard_name`
+
+Use the Render URL as `SERVICE_BASE_URL` in `.env`, then verify the deployed
+service health endpoint:
+
+```bash
+curl -i "$SERVICE_BASE_URL/health"
+```
+
+If the Render URL changes after a replace, update `SERVICE_BASE_URL` in `.env`
+to match `render_service_url`. On the free Render plan, direct Terraform
+updates to the web service can be limited by Render's API behavior, so the
+configuration ignores Render-managed service defaults after creation while
+Terraform continues to own the runtime resource itself.
+
+### Secret handling
+
+Sensitive values are not committed to Terraform files. The wrapper reads them
+from `.env` and exports the matching Terraform inputs at command runtime, after
+which Terraform pushes them to Render as service environment variables.
+
+Important caveat:
+
+- Terraform state can still contain sensitive values
+- keep state out of git
+- use a secure backend or secure CI workspace when applying in shared contexts
+
+### Default runtime behavior
+
+The Terraform-managed Render service preserves the current deployment defaults:
 
 - `TELEGRAM_UPDATE_MODE=polling`
 - `TELEGRAM_POLL_INTERVAL_SECONDS=3`
 - `APP_SESSION_TTL_SECONDS=3600`
 - `CHAT_CLIENT_STORE_PATH=/tmp/chat_client.sqlite3`
-
-So on the free Render plan, you do not need to set those manually unless you
-are intentionally changing behavior.
+- `CHAT_CLIENT_ASSISTANT_PROVIDER=gemini`
 
 Important storage note:
 
-- the current free-plan blueprint uses `/tmp/chat_client.sqlite3`
-- that is writable on free Render, but it is ephemeral
+- `/tmp/chat_client.sqlite3` is writable on Render but ephemeral
 - if the service restarts or redeploys, auth sessions and stored bot-observed
   messages can be lost
 
-If you move to a paid plan with a persistent disk, then switch to:
-
-- `CHAT_CLIENT_STORE_PATH=/var/data/chat_client.sqlite3`
-
-Optional variables:
-
-- `APP_SESSION_SECRET` (signing override; defaults to the bot token)
-- `APP_SESSION_TTL_SECONDS`
-- `TELEGRAM_OIDC_CLIENT_ID` (optional override; otherwise derived from the bot id)
-- `TELEGRAM_OIDC_CLIENT_SECRET` (optional override only for explicit code flow)
-- `TELEGRAM_WEBHOOK_SECRET`
-- `TELEGRAM_BOT_API_BASE_URL`
-
-Do not set optional variables unless you actually need them. The more you
-change away from the minimal working setup, the more ways there are to drift
-from the proven deployment path.
+If you move to a paid plan with persistent disk support, switch
+`CHAT_CLIENT_STORE_PATH` to a durable mount path such as `/var/data/chat_client.sqlite3`.
 
 ## BotFather Setup
 

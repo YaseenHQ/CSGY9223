@@ -32,7 +32,7 @@ def test_make_tool_produces_openai_tool_dict() -> None:
 def test_make_tool_schema_includes_required_fields() -> None:
     """Required Pydantic fields appear in the ``required`` list."""
     tool = make_tool("get_weather", "desc", _WeatherArgs)
-    params: dict[str, Any] = tool["function"]["parameters"]  # type: ignore[index]
+    params: dict[str, Any] = tool["function"]["parameters"]
 
     assert params["type"] == "object"
     assert "city" in params["properties"]
@@ -54,7 +54,7 @@ def test_make_tool_empty_model_produces_valid_schema() -> None:
     tool = make_tool("no_args_tool", "No args needed.", _EmptyArgs)
 
     assert tool["function"]["name"] == "no_args_tool"
-    params: dict[str, Any] = tool["function"]["parameters"]  # type: ignore[index]
+    params: dict[str, Any] = tool["function"]["parameters"]
     assert params["type"] == "object"
     assert params.get("required", []) == []
 

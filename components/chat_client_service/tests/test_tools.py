@@ -19,7 +19,7 @@ from chat_client_service.tools import (
 
 def test_tools_list_contains_all_expected_tools() -> None:
     """Every chat and issue-tracker tool name is present in TOOLS."""
-    names = {t["function"]["name"] for t in TOOLS}  # type: ignore[index]
+    names = {t["function"]["name"] for t in TOOLS}
     expected = {
         "get_messages",
         "get_message",
@@ -47,8 +47,8 @@ def test_each_tool_has_non_empty_description() -> None:
     """Every tool carries a non-empty description string."""
     for tool in TOOLS:
         fn = tool["function"]
-        assert isinstance(fn["description"], str)  # type: ignore[index]
-        assert fn["description"]  # type: ignore[index]
+        assert isinstance(fn["description"], str)
+        assert fn["description"]
 
 
 def test_get_messages_args_accepts_valid_input() -> None:

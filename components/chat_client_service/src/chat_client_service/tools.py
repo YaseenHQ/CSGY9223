@@ -145,14 +145,10 @@ CHAT_TOOLS: list[dict[str, Any]] = [
 ]
 
 ISSUE_TRACKER_TOOLS: list[dict[str, Any]] = [
-    make_tool(
-        "get_boards", "List all available issue tracker boards.", GetBoardsArgs
-    ),
+    make_tool("get_boards", "List all available issue tracker boards.", GetBoardsArgs),
     make_tool("get_issues", "List all issues on a board.", GetIssuesArgs),
     make_tool("create_issue", "Create a new issue on a board.", CreateIssueArgs),
-    make_tool(
-        "update_issue", "Update fields on an existing issue.", UpdateIssueArgs
-    ),
+    make_tool("update_issue", "Update fields on an existing issue.", UpdateIssueArgs),
     make_tool("delete_issue", "Delete an issue by ID.", DeleteIssueArgs),
     make_tool("create_board", "Create a new board.", CreateBoardArgs),
 ]

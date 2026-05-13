@@ -278,6 +278,26 @@ def test_telegram_webhook_rejects_invalid_secret_before_assistant() -> None:
     assistant.handle_update.assert_not_called()
 
 
+def test_orchestrator_returns_error_reply_for_invalid_tool_args() -> None:
+    """Invalid tool-call arguments produce an error string reply instead of crashing."""
+    ai_client = Mock()
+    ai_client.send_message.return_value = {
+        "name": "get_issues",
+        "arguments": {},  # missing required board_id
+    }
+    bridge = Mock()
+    chat_client = Mock()
+
+    reply = TelegramAssistantOrchestrator(ai_client, bridge, chat_client).handle_update(
+        _telegram_message_update(text="list issues")
+    )
+
+    assert reply is not None
+    assert "Invalid arguments" in reply
+    bridge.get_issues.assert_not_called()
+    chat_client.send_message.assert_called_once()
+
+
 def test_update_poller_forwards_updates_to_callback() -> None:
     """Background polling should forward raw updates to the assistant callback."""
 

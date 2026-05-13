@@ -19,6 +19,12 @@ members = [
 name = "ai-client-api"
 version = "0.1.0"
 source = { editable = "components/ai_client_api" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.0.0" }]
 
 [[package]]
 name = "annotated-doc"

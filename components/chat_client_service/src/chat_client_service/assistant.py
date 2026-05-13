@@ -8,12 +8,29 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-LOGGER = logging.getLogger(__name__)
-
 from api.issue import Status
 from trello_client_impl import TrelloClient
 
 import ai_client_api
+from chat_client_service.tools import (
+    TOOLS as _TOOLS,
+)
+from chat_client_service.tools import (
+    CreateBoardArgs,
+    CreateIssueArgs,
+    DeleteIssueArgs,
+    DeleteMessageArgs,
+    GetBoardsArgs,
+    GetChannelArgs,
+    GetChannelsArgs,
+    GetIssuesArgs,
+    GetMessageArgs,
+    GetMessagesArgs,
+    SendMessageArgs,
+    ToolCallValidationError,
+    UpdateIssueArgs,
+    validate_tool_args,
+)
 from issue_tracker_integration.client import get_bridge
 from issue_tracker_integration.trello_adapter import TrelloClientAdapter
 
@@ -22,188 +39,7 @@ if TYPE_CHECKING:
     from chat_client_api import ChatClient
     from issue_tracker_integration.client import IssueTrackerBridge
 
-_ISSUE_TRACKER_TOOLS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_boards",
-            "description": "List all available issue tracker boards.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_issues",
-            "description": "List all issues on a board.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "board_id": {
-                        "type": "string",
-                        "description": "The board ID to fetch issues from.",
-                    },
-                },
-                "required": ["board_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_issue",
-            "description": "Create a new issue on a board.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string", "description": "Issue title."},
-                    "board_id": {"type": "string", "description": "Target board ID."},
-                    "desc": {"type": "string", "description": "Optional description."},
-                    "status": {
-                        "type": "string",
-                        "enum": ["to_do", "in_progress", "completed"],
-                        "description": "Initial status (default: to_do).",
-                    },
-                },
-                "required": ["title", "board_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "update_issue",
-            "description": "Update fields on an existing issue.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "issue_id": {
-                        "type": "string",
-                        "description": "Issue ID to update.",
-                    },
-                    "title": {"type": "string", "description": "New title."},
-                    "desc": {"type": "string", "description": "New description."},
-                    "status": {
-                        "type": "string",
-                        "enum": ["to_do", "in_progress", "completed"],
-                    },
-                },
-                "required": ["issue_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_issue",
-            "description": "Delete an issue by ID.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "issue_id": {
-                        "type": "string",
-                        "description": "Issue ID to delete.",
-                    },
-                },
-                "required": ["issue_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_board",
-            "description": "Create a new board.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "Board name."},
-                },
-                "required": ["name"],
-            },
-        },
-    },
-]
-
-_CHAT_TOOLS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "get_messages",
-            "description": "List messages from a chat channel.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "channel_id": {"type": "string"},
-                    "limit": {"type": "integer"},
-                    "cursor": {"type": "string"},
-                },
-                "required": ["channel_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_message",
-            "description": "Get one message by its opaque id.",
-            "parameters": {
-                "type": "object",
-                "properties": {"message_id": {"type": "string"}},
-                "required": ["message_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "send_message",
-            "description": "Send a message to the current Telegram chat.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "channel_id": {"type": "string"},
-                    "text": {"type": "string"},
-                },
-                "required": ["text"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_message",
-            "description": "Delete a message by its opaque id.",
-            "parameters": {
-                "type": "object",
-                "properties": {"message_id": {"type": "string"}},
-                "required": ["message_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_channels",
-            "description": "List Telegram chats available to the bot.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_channel",
-            "description": "Get one Telegram chat by id.",
-            "parameters": {
-                "type": "object",
-                "properties": {"channel_id": {"type": "string"}},
-                "required": ["channel_id"],
-            },
-        },
-    },
-]
-
-_TOOLS = _CHAT_TOOLS + _ISSUE_TRACKER_TOOLS
+LOGGER = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = (
     "You are a Telegram assistant for chat and issue tracker workflows. "
@@ -323,10 +159,13 @@ def _dispatch(
     tool_call: ToolCallResponse,
     chat_id: str,
 ) -> str:
-    chat_reply = _dispatch_chat_tool(chat_client, tool_call, chat_id)
-    if chat_reply is not None:
-        return chat_reply
-    return _dispatch_issue_tracker_tool(bridge, tool_call)
+    try:
+        chat_reply = _dispatch_chat_tool(chat_client, tool_call, chat_id)
+        if chat_reply is not None:
+            return chat_reply
+        return _dispatch_issue_tracker_tool(bridge, tool_call)
+    except ToolCallValidationError as exc:
+        return str(exc)
 
 
 def _dispatch_chat_tool(  # noqa: PLR0911
@@ -338,31 +177,36 @@ def _dispatch_chat_tool(  # noqa: PLR0911
     args = tool_call["arguments"]
 
     if name == "get_messages":
-        request_kwargs: dict[str, str | int] = {
-            "channel_id": args["channel_id"],
-            "limit": int(args.get("limit", 10)),
+        validated = validate_tool_args("get_messages", GetMessagesArgs, args)
+        request_kwargs: dict[str, Any] = {
+            "channel_id": validated.channel_id,
+            "limit": validated.limit,
         }
-        if "cursor" in args:
-            request_kwargs["cursor"] = str(args["cursor"])
+        if validated.cursor is not None:
+            request_kwargs["cursor"] = validated.cursor
         messages = chat_client.get_messages(**request_kwargs)
         if not messages:
-            return f"No messages found on channel {args['channel_id']}."
+            return f"No messages found on channel {validated.channel_id}."
         lines = [_format_message(message) for message in messages]
         return "Messages:\n" + "\n".join(lines)
 
     if name == "get_message":
-        message = chat_client.get_message(args["message_id"])
+        validated_gm = validate_tool_args("get_message", GetMessageArgs, args)
+        message = chat_client.get_message(validated_gm.message_id)
         return "Message:\n" + _format_message(message)
 
     if name == "send_message":
-        sent = chat_client.send_message(channel_id=chat_id, text=str(args["text"]))
+        validated_sm = validate_tool_args("send_message", SendMessageArgs, args)
+        sent = chat_client.send_message(channel_id=chat_id, text=validated_sm.text)
         return f"Sent message {sent.message_id}."
 
     if name == "delete_message":
-        chat_client.delete_message(args["message_id"])
-        return f"Deleted message {args['message_id']}."
+        validated_dm = validate_tool_args("delete_message", DeleteMessageArgs, args)
+        chat_client.delete_message(validated_dm.message_id)
+        return f"Deleted message {validated_dm.message_id}."
 
     if name == "get_channels":
+        validate_tool_args("get_channels", GetChannelsArgs, args)
         channels = list(chat_client.get_channels())
         if not channels:
             return "No channels found."
@@ -370,7 +214,8 @@ def _dispatch_chat_tool(  # noqa: PLR0911
         return "Channels:\n" + "\n".join(lines)
 
     if name == "get_channel":
-        channel = chat_client.get_channel(args["channel_id"])
+        validated_gc = validate_tool_args("get_channel", GetChannelArgs, args)
+        channel = chat_client.get_channel(validated_gc.channel_id)
         return "Channel:\n" + _format_channel(channel)
 
     return None
@@ -387,6 +232,7 @@ def _dispatch_issue_tracker_tool(  # noqa: PLR0911
         return "Issue tracker integration is not configured."
 
     if name == "get_boards":
+        validate_tool_args("get_boards", GetBoardsArgs, args)
         boards = list(bridge.get_boards())
         if not boards:
             return "No boards found."
@@ -394,9 +240,10 @@ def _dispatch_issue_tracker_tool(  # noqa: PLR0911
         return "Boards:\n" + "\n".join(lines)
 
     if name == "get_issues":
-        issues = list(bridge.get_issues(args["board_id"]))
+        validated_gi = validate_tool_args("get_issues", GetIssuesArgs, args)
+        issues = list(bridge.get_issues(validated_gi.board_id))
         if not issues:
-            return f"No issues on board {args['board_id']}."
+            return f"No issues on board {validated_gi.board_id}."
         lines = [
             f"• [{issue.status.value}] {issue.title} (id: {issue.id})"
             for issue in issues
@@ -404,31 +251,39 @@ def _dispatch_issue_tracker_tool(  # noqa: PLR0911
         return "Issues:\n" + "\n".join(lines)
 
     if name == "create_issue":
-        status = _STATUS_MAP.get(args.get("status", "to_do"), Status.TO_DO)
+        validated_ci = validate_tool_args("create_issue", CreateIssueArgs, args)
+        status = _STATUS_MAP.get(validated_ci.status, Status.TO_DO)
         issue = bridge.create_issue(
-            title=args["title"],
-            board_id=args["board_id"],
-            desc=args.get("desc"),
+            title=validated_ci.title,
+            board_id=validated_ci.board_id,
+            desc=validated_ci.desc,
             status=status,
         )
         return f"Created issue '{issue.title}' (id: {issue.id})."
 
     if name == "update_issue":
-        status = _STATUS_MAP.get(args["status"]) if "status" in args else None
+        validated_ui = validate_tool_args("update_issue", UpdateIssueArgs, args)
+        status = (
+            _STATUS_MAP.get(validated_ui.status)
+            if validated_ui.status is not None
+            else None
+        )
         issue = bridge.update_issue(
-            args["issue_id"],
-            title=args.get("title"),
-            desc=args.get("desc"),
+            validated_ui.issue_id,
+            title=validated_ui.title,
+            desc=validated_ui.desc,
             status=status,
         )
         return f"Updated issue '{issue.title}' (id: {issue.id})."
 
     if name == "delete_issue":
-        bridge.delete_issue(args["issue_id"])
-        return f"Deleted issue {args['issue_id']}."
+        validated_di = validate_tool_args("delete_issue", DeleteIssueArgs, args)
+        bridge.delete_issue(validated_di.issue_id)
+        return f"Deleted issue {validated_di.issue_id}."
 
     if name == "create_board":
-        board = bridge.create_board(args["name"])
+        validated_cb = validate_tool_args("create_board", CreateBoardArgs, args)
+        board = bridge.create_board(validated_cb.name)
         return f"Created board '{board.board_name}' (id: {board.id})."
 
     return f"Unknown tool: {name}"
